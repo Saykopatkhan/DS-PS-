@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DS IPS - Ağ Saldırı Tespit & Önleme Paneli</title>
+    <meta name="description" content="DS IPS - Gerçek zamanlı ağ saldırı tespit ve önleme sistemi dashboard paneli">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <!-- HEADER -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-icon">🛡️</span>
+                <h1>DS <span class="accent">IPS</span></h1>
+            </div>
+            <span class="subtitle">Ağ Saldırı Tespit & Önleme Sistemi</span>
+        </div>
+        <div class="header-right">
+            <div class="status-badge" id="status-badge">
+                <span class="status-dot"></span>
+                <span class="status-text">Bağlanıyor...</span>
+            </div>
+            <div class="mode-badge" id="mode-badge">IDS</div>
+            <button class="btn btn-sm btn-primary" style="margin-left:10px;" onclick="window.location.href='/api/export/alerts'">Rapor İndir</button>
+            <button class="btn btn-sm" style="margin-left:10px;" onclick="openSettings()">⚙️ Ayarlar</button>
+        </div>
+    </header>
+
+    <main class="dashboard">
+        <!-- STATS ROW -->
+        <section class="stats-row">
+            <div class="stat-card">
+                <div class="stat-icon">⚠️</div>
+                <div class="stat-info">
+                    <span class="stat-value" id="total-alerts">0</span>
+                    <span class="stat-label">Toplam Alarm</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">🚫</div>
+                <div class="stat-info">
+                    <span class="stat-value" id="active-bans">0</span>
+                    <span class="stat-label">Aktif Ban</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">🌐</div>
+                <div class="stat-info">
+                    <span class="stat-value" id="interface-name">eth0</span>
+                    <span class="stat-label">Arayüz</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">⏱️</div>
+                <div class="stat-info">
+                    <span class="stat-value" id="uptime">00:00:00</span>
+                    <span class="stat-label">Çalışma Süresi</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- MODULE CARDS ROW -->
+        <section class="modules-row">
+            <div class="module-card" id="arp-module">
+                <div class="module-header">
+                    <span class="module-icon">🔗</span>
+                    <h3>ARP Detektörü</h3>
+                </div>
+                <div class="module-stats">
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="arp-requests">0</span>
+                        <span class="module-stat-label">Request</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="arp-replies">0</span>
+                        <span class="module-stat-label">Reply</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="arp-gratuitous">0</span>
+                        <span class="module-stat-label">Gratuitous</span>
+                    </div>
+                </div>
+                <div class="module-footer">
+                    <span class="module-status active">Aktif</span>
+                </div>
+            </div>
+
+            <div class="module-card" id="scan-module">
+                <div class="module-header">
+                    <span class="module-icon">🔍</span>
+                    <h3>Tarama Detektörü</h3>
+                </div>
+                <div class="module-stats">
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="scan-syn">0</span>
+                        <span class="module-stat-label">SYN</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="scan-fin">0</span>
+                        <span class="module-stat-label">FIN</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="scan-xmas">0</span>
+                        <span class="module-stat-label">XMAS</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="scan-null">0</span>
+                        <span class="module-stat-label">NULL</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="scan-udp">0</span>
+                        <span class="module-stat-label">UDP</span>
+                    </div>
+                </div>
+                <div class="module-footer">
+                    <span class="module-status active">Aktif</span>
+                </div>
+            </div>
+
+            <div class="module-card" id="wifi-module">
+                <div class="module-header">
+                    <span class="module-icon">📡</span>
+                    <h3>WiFi Detektörü</h3>
+                </div>
+                <div class="module-stats">
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="wifi-deauth">0</span>
+                        <span class="module-stat-label">Deauth</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="wifi-beacon">0</span>
+                        <span class="module-stat-label">Beacon</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="wifi-evil-twin">0</span>
+                        <span class="module-stat-label">Evil Twin</span>
+                    </div>
+                </div>
+                <div class="module-footer">
+                    <span class="module-status" id="wifi-status">Pasif</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- NETWORK MAP ROW -->
+        <section class="map-row" style="margin-top: 20px;">
+            <div class="map-panel" style="background-color: #112240; border-radius: 8px; border: 1px solid #233554; padding: 20px;">
+                <div class="panel-header" style="margin-bottom: 10px;">
+                    <h2>🕸️ Canlı Ağ Haritası</h2>
+                </div>
+                <div id="network-map" style="width: 100%; height: 400px; background-color: #0a192f; border-radius: 4px; border: 1px solid #1d2d50;"></div>
+                <!-- Context Menu -->
+                <div id="map-context-menu" style="display: none; position: absolute; background: rgba(15, 23, 42, 0.95); border: 1px solid #ff4444; border-radius: 8px; padding: 10px; z-index: 1000; box-shadow: 0 4px 15px rgba(0,0,0,0.8); backdrop-filter: blur(10px);">
+                    <div id="context-header" style="color: #e2e8f0; margin-bottom: 10px; font-weight: bold; font-family: var(--font-mono); font-size: 0.9rem;"></div>
+                    <button id="btn-context-ban" class="btn btn-sm btn-danger" style="width: 100%; margin-bottom: 5px;">🔥 Manuel İzole Et (Ban)</button>
+                    <button class="btn btn-sm btn-secondary" style="width: 100%;" onclick="document.getElementById('map-context-menu').style.display='none'">İptal</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- MAIN CONTENT: ALERTS + SIDEBAR -->
+        <section class="content-row">
+            <!-- ALERT FEED -->
+            <div class="alerts-panel">
+                <div class="panel-header">
+                    <h2>🔔 Canlı Alarm Akışı</h2>
+                    <button class="btn btn-sm" id="clear-alerts-btn" onclick="clearAlertFeed()">Temizle</button>
+                </div>
+                <div class="alerts-list" id="alerts-list">
+                    <div class="alert-empty">
+                        <span>Henüz alarm yok. Sistem başlatıldığında alarmlar burada görünecek.</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SIDEBAR -->
+            <div class="sidebar">
+                <!-- CONTROL PANEL -->
+                <div class="control-panel">
+                    <div class="panel-header">
+                        <h2>⚙️ Kontrol Paneli</h2>
+                    </div>
+                    <div class="control-body">
+                        <div class="control-group">
+                            <label>Ağ Arayüzü</label>
+                            <input type="text" id="interface-input" value="eth0" class="input-field" placeholder="eth0, wlan0...">
+                        </div>
+                        <div class="control-buttons">
+                            <button class="btn btn-success" id="start-btn" onclick="startSniffer()">▶ Başlat</button>
+                            <button class="btn btn-danger" id="stop-btn" onclick="stopSniffer()" disabled>⏹ Durdur</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- BAN MANAGEMENT -->
+                <div class="ban-panel">
+                    <div class="panel-header">
+                        <h2>🚫 Aktif Engellemeler</h2>
+                    </div>
+                    <div class="ban-form" style="display:none;">
+                        <input type="text" id="ban-ip" class="input-field" placeholder="IP Adresi">
+                        <input type="text" id="ban-mac" class="input-field" placeholder="MAC Adresi">
+                        <input type="text" id="ban-reason" class="input-field" placeholder="Neden">
+                        <button class="btn btn-danger btn-full" onclick="addBan()">Engelle</button>
+                    </div>
+                    <div class="ban-list" id="ban-list">
+                        <div class="ban-empty">Aktif ban bulunmuyor.</div>
+                    </div>
+                </div>
+
+                <!-- NETWORK DEVICES SCANNER -->
+                <div class="scanner-panel">
+                    <div class="panel-header">
+                        <h2>📡 Ağdaki Cihazlar</h2>
+                        <button class="btn btn-sm btn-primary" id="scan-btn" onclick="runNetworkScan()">Taramayı Başlat</button>
+                    </div>
+                    <div class="scanner-list" id="scanner-list">
+                        <div class="ban-empty">Cihazları görmek için taramayı başlatın.</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- SETTINGS MODAL -->
+    <div id="settings-modal" class="modal" style="display:none; position:fixed; z-index:2000; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.7);">
+        <div class="modal-content" style="background-color:#112240; margin:10% auto; padding:20px; border:1px solid #233554; border-radius:8px; width:400px; color:#e6f1ff;">
+            <h2 style="margin-top:0;">Dış Bildirim Ayarları</h2>
+            <div class="control-group" style="margin-top:15px;">
+                <label style="color:#8892b0;">Discord Webhook URL:</label>
+                <input type="text" id="setting-discord" class="input-field" placeholder="https://discord.com/api/webhooks/..." style="width:100%; margin-top:5px; box-sizing:border-box;">
+            </div>
+            <div class="control-group" style="margin-top:15px;">
+                <label style="color:#8892b0;">Telegram Bot Token:</label>
+                <input type="text" id="setting-telegram-token" class="input-field" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" style="width:100%; margin-top:5px; box-sizing:border-box;">
+            </div>
+            <div class="control-group" style="margin-top:15px;">
+                <label style="color:#8892b0;">Telegram Chat ID:</label>
+                <input type="text" id="setting-telegram-chat" class="input-field" placeholder="-100123456789" style="width:100%; margin-top:5px; box-sizing:border-box;">
+            </div>
+            <div style="margin-top:20px; display:flex; justify-content:flex-end; gap:10px;">
+                <button class="btn btn-sm" onclick="closeSettings()">İptal</button>
+                <button class="btn btn-sm btn-success" onclick="saveSettings()">Kaydet</button>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <span>DS IPS v1.0 | Ağ Saldırı Tespit & Önleme Sistemi</span>
+    </footer>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/vis-network.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

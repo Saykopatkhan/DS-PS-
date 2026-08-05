@@ -1,0 +1,6 @@
+flask
+flask-socketio
+scapy
+requests
+paramiko
+colorama

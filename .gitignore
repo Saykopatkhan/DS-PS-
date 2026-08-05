@@ -1,0 +1,20 @@
+# Veritabanı ve loglar
+*.db
+*.sqlite3
+pcaps/
+*.log
+
+# Ortam değişkenleri
+.env
+
+# Python geçici dosyaları
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# İşletim sistemi kalıntıları
+.DS_Store
+Thumbs.db
