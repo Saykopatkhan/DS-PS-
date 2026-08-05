@@ -3,6 +3,14 @@
  * SocketIO ile gerçek zamanlı alarm akışı, istatistik güncellemesi ve kontrol paneli.
  */
 
+// 🚨 GÜVENLİK: KAYNAK KODU KORUMASI (DevTools Engelleme) 🚨
+document.addEventListener('contextmenu', event => event.preventDefault()); // Sağ tık
+document.addEventListener('keydown', event => {
+    if (event.key === 'F12') { event.preventDefault(); return; } // F12
+    if (event.ctrlKey && event.shiftKey && ['I', 'J', 'C', 'i', 'j', 'c'].includes(event.key)) { event.preventDefault(); return; } // Ctrl+Shift+I/C/J
+    if (event.ctrlKey && (event.key === 'U' || event.key === 'u')) { event.preventDefault(); return; } // Ctrl+U
+});
+
 let socket = null;
 
 // DS-01: Fetch WS Token before connecting
