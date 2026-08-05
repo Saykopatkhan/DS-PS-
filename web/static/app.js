@@ -3,8 +3,75 @@
  * SocketIO ile gerçek zamanlı alarm akışı, istatistik güncellemesi ve kontrol paneli.
  */
 
-// SocketIO bağlantısı
-const socket = io();
+let socket = null;
+
+// DS-01: Fetch WS Token before connecting
+fetch('/api/ws_token', {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+    .then(r => r.json())
+    .then(tokenData => {
+        socket = io({ auth: { token: tokenData.token } });
+
+        socket.on('connect', () => {
+            console.log('[DS IPS] WebSocket bağlantısı kuruldu');
+        });
+
+        socket.on('disconnect', () => {
+            console.log('[DS IPS] WebSocket bağlantısı kesildi');
+            const badge = document.getElementById('status-badge');
+            if(badge) {
+                badge.className = 'status-badge';
+                badge.querySelector('.status-text').textContent = 'Bağlantı Kesildi';
+            }
+        });
+
+        socket.on('new_alert', (data) => {
+            addAlertToFeed(data, true);
+            const el = document.getElementById('total-alerts');
+            if(el) el.textContent = parseInt(el.textContent) + 1;
+            
+            if (typeof drawAttackLaser === "function") {
+                drawAttackLaser(data.source_ip, data.destination_ip, data.severity);
+            }
+        });
+
+        socket.on('stats_update', (data) => {
+            updateStats(data);
+        });
+
+        socket.on('status_update', (data) => {
+            updateRunningStatus(data.running);
+        });
+
+        socket.on('ban_update', (data) => {
+            fetch('/api/bans')
+                .then(r => r.json())
+                .then(bans => renderBanList(bans));
+
+            const el = document.getElementById('active-bans');
+            if (el) {
+                if (data.action === 'added') {
+                    el.textContent = parseInt(el.textContent) + 1;
+                } else {
+                    el.textContent = Math.max(0, parseInt(el.textContent) - 1);
+                }
+            }
+        });
+
+        socket.on('scan_complete', (data) => {
+            const btn = document.getElementById('scan-btn');
+            const list = document.getElementById('scanner-list');
+            
+            if(btn) {
+                btn.disabled = false;
+                btn.textContent = 'Taramayı Başlat';
+            }
+            
+            if (data.success && data.records) {
+                renderDeviceList(data.records);
+                showNotification('Tarama tamamlandı', 'success');
+            }
+        });
+    });
 
 // Durum değişkenleri
 let isRunning = false;
@@ -58,52 +125,7 @@ function loadInitialData() {
     }, 15000);
 }
 
-// ---- SocketIO Event Handlers ----
-
-socket.on('connect', () => {
-    console.log('[DS IPS] WebSocket bağlantısı kuruldu');
-});
-
-socket.on('disconnect', () => {
-    console.log('[DS IPS] WebSocket bağlantısı kesildi');
-    const badge = document.getElementById('status-badge');
-    badge.className = 'status-badge';
-    badge.querySelector('.status-text').textContent = 'Bağlantı Kesildi';
-});
-
-socket.on('new_alert', (data) => {
-    addAlertToFeed(data, true);
-    // Toplam alarm sayacını artır
-    const el = document.getElementById('total-alerts');
-    el.textContent = parseInt(el.textContent) + 1;
-    
-    // Ağ haritasında saldırıyı canlandır
-    if (typeof drawAttackLaser === "function") {
-        drawAttackLaser(data.source_ip, data.destination_ip, data.severity);
-    }
-});
-
-socket.on('stats_update', (data) => {
-    updateStats(data);
-});
-
-socket.on('status_update', (data) => {
-    updateRunningStatus(data.running);
-});
-
-socket.on('ban_update', (data) => {
-    // Ban listesini yeniden yükle
-    fetch('/api/bans')
-        .then(r => r.json())
-        .then(bans => renderBanList(bans));
-
-    const el = document.getElementById('active-bans');
-    if (data.action === 'added') {
-        el.textContent = parseInt(el.textContent) + 1;
-    } else {
-        el.textContent = Math.max(0, parseInt(el.textContent) - 1);
-    }
-});
+// (WebSocket olayları yukarıda initialize edildi)
 
 // ---- Alarm Akışı ----
 
@@ -255,7 +277,7 @@ function startSniffer() {
 
     fetch('/api/control', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({ action: 'start', interface: iface })
     })
     .then(r => r.json())
@@ -271,7 +293,7 @@ function startSniffer() {
 function stopSniffer() {
     fetch('/api/control', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({ action: 'stop' })
     })
     .then(r => r.json())
@@ -298,7 +320,7 @@ function addBan() {
 
     fetch('/api/ban', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({ ip, mac, reason })
     })
     .then(r => r.json())
@@ -317,7 +339,7 @@ function addBan() {
 function removeBan(ip, mac) {
     fetch('/api/unban', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({ ip: ip || '', mac: mac || '' })
     })
     .then(r => r.json())
@@ -419,7 +441,7 @@ function runNetworkScan() {
     btn.textContent = 'Taranıyor...';
     list.innerHTML = '<div class="ban-empty">Ağ taranıyor, lütfen bekleyin...</div>';
     
-    fetch('/api/scan', { method: 'POST' })
+    fetch('/api/scan', { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
         .then(r => r.json())
         .then(data => {
             if (!data.success) {
@@ -438,6 +460,7 @@ function runNetworkScan() {
 }
 
 // Socket event for scan completion
+const socket = io({ auth: { token: wsAuthToken } });
 socket.on('scan_complete', (data) => {
     const btn = document.getElementById('scan-btn');
     const list = document.getElementById('scanner-list');
@@ -550,7 +573,7 @@ function saveSettings() {
     
     fetch('/api/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         credentials: 'same-origin',
         body: JSON.stringify(data)
     })
@@ -599,7 +622,7 @@ function initNetworkMap() {
             if (nodeId.endsWith('.1') && nodeData.label.includes('Modem')) return;
             
             const header = document.getElementById('context-header');
-            header.innerHTML = `Hedef: ${nodeId}<br><span style="color:#ffaa00; font-size: 0.8rem;">${nodeData.title.split('\\n')[0]}</span>`;
+            header.innerHTML = `Hedef: ${escapeHtml(nodeId)}<br><span style="color:#ffaa00; font-size: 0.8rem;">${escapeHtml(nodeData.title.split('\\n')[0])}</span>`;
             
             const btn = document.getElementById('btn-context-ban');
             btn.onclick = function() {

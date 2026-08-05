@@ -39,8 +39,9 @@ class IPSWebApp:
         self.app = Flask(__name__,
                          template_folder=os.path.join(os.path.dirname(__file__), 'templates'),
                          static_folder=os.path.join(os.path.dirname(__file__), 'static'))
-        self.app.config['SECRET_KEY'] = 'ds_ips_secret_key_2024'
-        self.socketio = SocketIO(self.app, cors_allowed_origins='*', async_mode='threading')
+        import secrets
+        self.app.config['SECRET_KEY'] = os.environ.get('DS_IPS_SECRET_KEY', secrets.token_hex(32))
+        self.socketio = SocketIO(self.app, cors_allowed_origins=None, async_mode='threading')
 
         # IPS bileşenleri
         self.interface = interface
@@ -96,6 +97,20 @@ class IPSWebApp:
         self.start_time = None
 
         self.failed_attempts = {}
+        self.failed_attempts_lock = threading.Lock()
+
+        import secrets
+        self.admin_user = os.environ.get('DS_IPS_USER')
+        self.admin_pass = os.environ.get('DS_IPS_PASS')
+        if not self.admin_user or not self.admin_pass:
+            self.admin_user = 'admin'
+            self.admin_pass = secrets.token_hex(8)
+            print(f"\n\033[91m[!] DİKKAT: DS_IPS_USER veya DS_IPS_PASS ortam değişkenleri bulunamadı.\033[0m")
+            print(f"\033[93m[!] Güvenliğiniz için rastgele şifre üretildi:\033[0m")
+            print(f"\033[92m[+] Kullanıcı Adı: {self.admin_user}\033[0m")
+            print(f"\033[92m[+] Şifre: {self.admin_pass}\033[0m\n")
+
+        self.ws_token = secrets.token_hex(16)
 
         # Route'ları ve event'leri kaydet
         print("[DEBUG] Calling _register_routes...")
@@ -115,34 +130,45 @@ class IPSWebApp:
                 request.path in ['/sirket_sifreleri.pdf', '/banka_bilgileri.xlsx']):
                 return None
                 
+            import hmac
             client_ip = request.remote_addr
             now = time.time()
             
-            # Ban kontrolü
-            if client_ip in self.failed_attempts:
-                record = self.failed_attempts[client_ip]
-                if record['lockout_until'] > now:
-                    remaining = int((record['lockout_until'] - now) / 60)
-                    return Response(
-                        f'Bruteforce Korumasi Aktif! 3 kez hatali giris yaptiniz. Lutfen {remaining} dakika sonra tekrar deneyin.', 429
-                    )
-                elif record['lockout_until'] != 0 and record['lockout_until'] <= now:
-                    # Süre bittiyse sıfırla
-                    self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0}
-            else:
-                self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0}
+            with self.failed_attempts_lock:
+                # Bellek sızıntısını önlemek için süresi dolan IP'leri temizle (DS-11)
+                keys_to_delete = [ip for ip, rec in self.failed_attempts.items() if now - rec.get('last_seen', now) > 3600]
+                for k in keys_to_delete:
+                    self.failed_attempts.pop(k, None)
+                
+                # Ban kontrolü
+                if client_ip in self.failed_attempts:
+                    record = self.failed_attempts[client_ip]
+                    record['last_seen'] = now
+                    if record['lockout_until'] > now:
+                        remaining = int((record['lockout_until'] - now) / 60)
+                        return Response(
+                            f'Bruteforce Korumasi Aktif! 3 kez hatali giris yaptiniz. Lutfen {remaining} dakika sonra tekrar deneyin.', 429
+                        )
+                    elif record['lockout_until'] != 0 and record['lockout_until'] <= now:
+                        self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0, 'last_seen': now}
+                else:
+                    self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0, 'last_seen': now}
+
+            # CSRF Koruması (DS-09) - POST/PUT isteklerinde header zorunlu
+            if request.method in ['POST', 'PUT', 'DELETE']:
+                if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+                    return "CSRF Koruması: X-Requested-With header eksik.", 403
 
             auth = request.authorization
-            admin_user = os.environ.get('DS_IPS_USER', 'admin')
-            admin_pass = os.environ.get('DS_IPS_PASS', 'admin')
             
-            if not auth or auth.username != admin_user or auth.password != admin_pass:
-                # Yanlış şifre denemesi (Eğer auth bilgisi geldiyse say)
+            if not auth or not hmac.compare_digest(auth.username, self.admin_user) or not hmac.compare_digest(auth.password, self.admin_pass):
+                # Yanlış şifre denemesi
                 if auth:
-                    self.failed_attempts[client_ip]['count'] += 1
-                    if self.failed_attempts[client_ip]['count'] >= 3:
-                        self.failed_attempts[client_ip]['lockout_until'] = now + (30 * 60) # 30 dakika
-                        return Response('Cok fazla hatali deneme! 30 dakika banlandiniz.', 429)
+                    with self.failed_attempts_lock:
+                        self.failed_attempts[client_ip]['count'] += 1
+                        if self.failed_attempts[client_ip]['count'] >= 3:
+                            self.failed_attempts[client_ip]['lockout_until'] = now + (30 * 60)
+                            return Response('Cok fazla hatali deneme! 30 dakika banlandiniz.', 429)
                         
                 return Response(
                     'Yetkisiz Erisim! Lutfen kullanici adi ve sifre girin.', 401,
@@ -150,7 +176,12 @@ class IPSWebApp:
                 )
             
             # Başarılı giriş: Hata sayacını sıfırla
-            self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0}
+            with self.failed_attempts_lock:
+                self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0, 'last_seen': now}
+
+        @self.app.route('/api/ws_token')
+        def get_ws_token():
+            return jsonify({'token': self.ws_token})
 
         @self.app.route('/')
         def index():
@@ -302,19 +333,42 @@ class IPSWebApp:
         @self.app.route('/api/settings', methods=['GET', 'POST'])
         def manage_settings():
             if request.method == 'GET':
+                dw = self.db.get_setting('discord_webhook', '')
+                tt = self.db.get_setting('telegram_token', '')
                 return jsonify({
-                    'discord_webhook': self.db.get_setting('discord_webhook', ''),
-                    'telegram_token': self.db.get_setting('telegram_token', ''),
+                    'discord_webhook': '********' if dw else '',
+                    'telegram_token': '********' if tt else '',
                     'telegram_chat_id': self.db.get_setting('telegram_chat_id', '')
                 })
             else:
                 data = request.get_json()
-                self.db.set_setting('discord_webhook', data.get('discord_webhook', ''))
-                self.db.set_setting('telegram_token', data.get('telegram_token', ''))
-                self.db.set_setting('telegram_chat_id', data.get('telegram_chat_id', ''))
+                dw = data.get('discord_webhook', '')
+                if dw and dw != '********':
+                    if not dw.startswith('https://discord.com/'):
+                        return jsonify({'success': False, 'error': 'Sadece discord.com adresine izin verilir (SSRF Koruması)'}), 400
+                    self.db.set_setting('discord_webhook', dw)
+                elif dw == '':
+                    self.db.set_setting('discord_webhook', '')
+
+                tt = data.get('telegram_token', '')
+                if tt and tt != '********':
+                    self.db.set_setting('telegram_token', tt)
+                elif tt == '':
+                    self.db.set_setting('telegram_token', '')
+
+                tc = data.get('telegram_chat_id', '')
+                if tc:
+                    self.db.set_setting('telegram_chat_id', tc)
+
                 self._update_notifier_config()
                 return jsonify({'success': True})
                 
+        def sanitize_csv(val):
+            s = str(val)
+            if s.startswith(('=', '+', '-', '@', '\t', '\r')):
+                return "'" + s
+            return s
+
         @self.app.route('/api/export/alerts')
         def export_alerts():
             alerts = self.db.get_alerts(limit=10000)
@@ -322,7 +376,7 @@ class IPSWebApp:
             cw = csv.writer(si)
             cw.writerow(['ID', 'Zaman', 'Tip', 'Kaynak IP', 'Kaynak MAC', 'Hedef IP', 'Açıklama', 'Seviye'])
             for a in alerts:
-                cw.writerow([a['id'], a['timestamp'], a['alert_type'], a['source_ip'], a['source_mac'], a['destination_ip'], a['description'], a['severity']])
+                cw.writerow([sanitize_csv(x) for x in [a['id'], a['timestamp'], a['alert_type'], a['source_ip'], a['source_mac'], a['destination_ip'], a['description'], a['severity']]])
             return Response(si.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment;filename=alerts.csv'})
 
         @self.app.route('/api/export/devices')
@@ -332,7 +386,7 @@ class IPSWebApp:
             cw = csv.writer(si)
             cw.writerow(['IP Adresi', 'MAC Adresi', 'Marka', 'Hostname', 'OS Tipi', 'Tehdit Skoru', 'İlk Görülme', 'Son Görülme'])
             for r in records:
-                cw.writerow([r['ip_address'], r['mac_address'], r.get('vendor',''), r.get('hostname',''), r.get('os_type',''), r.get('threat_score',0), r['first_seen'], r['last_seen']])
+                cw.writerow([sanitize_csv(x) for x in [r['ip_address'], r['mac_address'], r.get('vendor',''), r.get('hostname',''), r.get('os_type',''), r.get('threat_score',0), r['first_seen'], r['last_seen']]])
             return Response(si.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment;filename=devices.csv'})
 
     def _update_notifier_config(self):
@@ -345,7 +399,10 @@ class IPSWebApp:
         """SocketIO event handler'larını kaydeder."""
 
         @self.socketio.on('connect')
-        def handle_connect():
+        def handle_connect(auth):
+            import hmac
+            if not auth or not hmac.compare_digest(auth.get('token', ''), self.ws_token):
+                return False
             emit('status_update', {'running': self.sniffer_running})
             emit('stats_update', self._get_stats())
 
@@ -424,5 +481,4 @@ class IPSWebApp:
         print(f"[*] Arayüz: {self.interface} | Mod: {self.mode.upper()} | WiFi: {'Aktif' if self.wifi_enabled else 'Pasif'}")
         print(f"[*] Ctrl+C ile kapatabilirsiniz.\n")
 
-        self.socketio.run(self.app, host=host, port=port, debug=debug,
-                          allow_unsafe_werkzeug=True)
+        self.socketio.run(self.app, host=host, port=port, debug=debug)

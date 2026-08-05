@@ -27,7 +27,7 @@ class ThreatIntelDetector:
 
     def _fetch_cins_army(self):
         try:
-            url = "http://cinsscore.com/list/ci-badguys.txt"
+            url = "https://cinsscore.com/list/ci-badguys.txt"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=10) as response:
                 content = response.read().decode('utf-8')
@@ -71,11 +71,11 @@ class ThreatIntelDetector:
 
     def _check_geo_ip(self, packet, src_ip, dst_ip):
         try:
-            url = f"http://ip-api.com/json/{dst_ip}?fields=countryCode"
+            url = f"https://ipapi.co/{dst_ip}/json/"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=5) as response:
                 data = json.loads(response.read().decode('utf-8'))
-                cc = data.get('countryCode', '')
+                cc = data.get('country_code', '')
                 self.geo_cache[dst_ip] = cc
                 
                 if cc in self.bad_countries:

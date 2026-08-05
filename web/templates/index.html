@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data:;">
     <title>DS IPS - Ağ Saldırı Tespit & Önleme Paneli</title>
     <meta name="description" content="DS IPS - Gerçek zamanlı ağ saldırı tespit ve önleme sistemi dashboard paneli">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -254,8 +255,8 @@
         <span>DS IPS v1.0 | Ağ Saldırı Tespit & Önleme Sistemi</span>
     </footer>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/vis-network.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='vis-network.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='socket.io.min.js') }}"></script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
