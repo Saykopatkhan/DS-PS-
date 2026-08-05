@@ -179,6 +179,15 @@ class IPSWebApp:
             with self.failed_attempts_lock:
                 self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0, 'last_seen': now}
 
+        @self.app.after_request
+        def add_security_headers(response):
+            response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+            response.headers['X-Frame-Options'] = 'DENY'
+            response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"
+            response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+            return response
+
         @self.app.route('/api/ws_token')
         def get_ws_token():
             return jsonify({'token': self.ws_token})
@@ -477,8 +486,8 @@ class IPSWebApp:
         stats_thread.start()
 
         print(f"\n[*] DS IPS Web Panel başlatılıyor...")
-        print(f"[*] Dashboard: http://{host}:{port}")
+        print(f"[*] Dashboard: https://{host}:{port} (HTTPS Aktif!)")
         print(f"[*] Arayüz: {self.interface} | Mod: {self.mode.upper()} | WiFi: {'Aktif' if self.wifi_enabled else 'Pasif'}")
         print(f"[*] Ctrl+C ile kapatabilirsiniz.\n")
 
-        self.socketio.run(self.app, host=host, port=port, debug=debug)
+        self.socketio.run(self.app, host=host, port=port, debug=debug, ssl_context='adhoc')

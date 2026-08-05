@@ -18,3 +18,4 @@ htmlcov/
 # İşletim sistemi kalıntıları
 .DS_Store
 Thumbs.db
+web/static/app.src.js
