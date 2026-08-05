@@ -655,17 +655,23 @@ function updateNetworkMap(records) {
         // Aktif / Pasif (15 Dakika)
         let lastSeenDate = new Date(device.last_seen.replace(' ', 'T') + 'Z');
         let isInactive = (new Date() - lastSeenDate) > 15 * 60 * 1000;
+        
+        // Uyuyan (Pasif) cihazları haritada gösterme (varsa kaldır)
+        if (isInactive) {
+            if (nodes.get(ip)) {
+                nodes.remove(ip);
+                edges.remove(`edge_${ip}`);
+            }
+            return; // Haritaya ekleme işlemini atla
+        }
 
         // Node rengini tehlikeye göre belirle
-        let color = '#8892b0';
-        if (isInactive) color = '#444444'; // Pasif cihaz gri
-        else if (device.threat_score > 20) color = '#ff4444'; // Kırmızı (Tehlike)
+        let color = '#64ffda'; // Yeşil (Güvenli)
+        if (device.threat_score > 20) color = '#ff4444'; // Kırmızı (Tehlike)
         else if (device.threat_score > 0) color = '#ffaa00'; // Sarı (Şüpheli)
-        else color = '#64ffda'; // Yeşil (Güvenli)
         
         let iconCode = '💻';
-        if (isInactive) iconCode = '💤';
-        else if (os.toLowerCase().includes('apple') || os.toLowerCase().includes('iphone')) iconCode = '📱';
+        if (os.toLowerCase().includes('apple') || os.toLowerCase().includes('iphone')) iconCode = '📱';
         else if (os.toLowerCase().includes('android')) iconCode = '📱';
         else if (vendor.toLowerCase().includes('router')) iconCode = '🌐';
         
