@@ -496,7 +496,7 @@ function renderDeviceList(records) {
         else if (score > 0) scoreColor = '#ffaa00';
         
         // Aktif / Pasif (15 Dakika sınırı)
-        let lastSeenDate = new Date(device.last_seen.replace(' ', 'T'));
+        let lastSeenDate = new Date(device.last_seen.replace(' ', 'T') + 'Z');
         let isInactive = (new Date() - lastSeenDate) > 15 * 60 * 1000;
         let statusBadge = isInactive ? '<span style="color: #8892b0; font-size: 0.8rem; margin-left: 10px;">⚪ Pasif</span>' : '<span style="color: #64ffda; font-size: 0.8rem; margin-left: 10px;">🟢 Aktif</span>';
         
@@ -513,7 +513,7 @@ function renderDeviceList(records) {
                 <div><span style="color: #64ffda;">OS Tipi:</span> ${osType}</div>
                 <div><span style="color: #64ffda;">Marka:</span> ${vendor}</div>
                 <div><span style="color: #64ffda;">Hostname:</span> ${hostname}</div>
-                <div><span style="color: #64ffda;">Son Görülme:</span> ${escapeHtml(device.last_seen)}</div>
+                <div><span style="color: #64ffda;">Son Görülme:</span> ${lastSeenDate.toLocaleString()}</div>
                 <div><span style="color: #64ffda;">Tehdit Skoru:</span> <strong style="color: ${scoreColor}">${score}</strong></div>
             </div>
         </div>
@@ -653,7 +653,7 @@ function updateNetworkMap(records) {
         const os = device.os_type || 'Bilinmiyor';
         
         // Aktif / Pasif (15 Dakika)
-        let lastSeenDate = new Date(device.last_seen.replace(' ', 'T'));
+        let lastSeenDate = new Date(device.last_seen.replace(' ', 'T') + 'Z');
         let isInactive = (new Date() - lastSeenDate) > 15 * 60 * 1000;
 
         // Node rengini tehlikeye göre belirle
