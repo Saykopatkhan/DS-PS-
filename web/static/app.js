@@ -670,6 +670,18 @@ function updateNetworkMap(records) {
         if (device.threat_score > 20) color = '#ff4444'; // Kırmızı (Tehlike)
         else if (device.threat_score > 0) color = '#ffaa00'; // Sarı (Şüpheli)
         
+        // Eğer bu cihaz modem/gateway ise, ayrı node eklemek yerine merkez node'u güncelle
+        let isGateway = ip.endsWith('.1') || (device.hostname && device.hostname.includes('gateway'));
+        if (isGateway) {
+            nodes.update({
+                id: 'gateway',
+                label: `🌐 Modem / Gateway\n(${ip})`,
+                title: `MAC: ${device.mac_address}\nMarka: ${vendor}\nOS: ${os}\nTehdit Skoru: ${device.threat_score}`,
+                color: color
+            });
+            return; // Ayrı bir cihaz olarak eklemeyi atla
+        }
+        
         let iconCode = '💻';
         if (os.toLowerCase().includes('apple') || os.toLowerCase().includes('iphone')) iconCode = '📱';
         else if (os.toLowerCase().includes('android')) iconCode = '📱';
