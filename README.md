@@ -63,7 +63,7 @@ sudo python3 web_main.py -i wlan0 --wifi
 ```
 
 4. Kurulum tamamlandıktan sonra tarayıcınızdan Web Paneline giriş yapın:
-👉 `http://127.0.0.1:5000` (Kullanıcı Adı: `Saykopatkhan16` Şifre: `khanfq`)
+👉 `http://127.0.0.1:5000` (Varsayılan Kullanıcı Adı: `admin` Şifre: `admin`)
 
 ---
 
