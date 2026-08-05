@@ -583,7 +583,8 @@ body {
 }
 
 .control-panel,
-.ban-panel {
+.ban-panel,
+.scanner-panel {
     background: var(--bg-card);
     backdrop-filter: blur(20px);
     border: 1px solid var(--border-light);
@@ -719,9 +720,10 @@ body {
     border-bottom: 1px solid var(--border);
 }
 
-.ban-list {
+.ban-list,
+.scanner-list {
     padding: 0.75rem;
-    max-height: 200px;
+    max-height: 250px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
