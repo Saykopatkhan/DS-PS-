@@ -1,77 +1,79 @@
-<div align="center">
-  <br>
-  <h1>🛡️ DS IPS (Intrusion Prevention System)</h1>
-  <p>
-    <b>Yapay Zeka Mantıklı, Aktif Savunma ve Sıfır Güven (Zero-Trust) Odaklı Siber Olay Yeri İnceleme ve Ağ Güvenlik Sistemi.</b>
-  </p>
-  <br>
-</div>
+<h1 align="center">🛡️ DS-IPS (Intrusion Prevention System) - Premium SOC Edition</h1>
 
-## 📌 Proje Hakkında
-DS IPS, sıradan bir izleme aracı (IDS) olmaktan öte, ağa giren saldırganı aktif olarak tuzağa düşüren, siber istihbarat toplayan ve delil (PCAP) oluşturan gelişmiş bir **Siber Güvenlik Askeri Üssü**'dür. Sistem, ağdaki tüm cihazları ve trafik akışını dinamik bir fizik motoruyla (Vis.js) görselleştirir, anormallikleri tespit eder ve saldırganları otomatik olarak Telegram üzerinden yöneticisine raporlar.
+<p align="center">
+  <img src="https://img.shields.io/badge/Version-2.6-00e5ff.svg?style=for-the-badge&logo=appveyor" alt="Version">
+  <img src="https://img.shields.io/badge/Python-3.x-blue.svg?style=for-the-badge&logo=python" alt="Python">
+  <img src="https://img.shields.io/badge/License-Proprietary-red.svg?style=for-the-badge&logo=law" alt="License">
+  <img src="https://img.shields.io/badge/Security-Military_Grade-success.svg?style=for-the-badge&logo=security" alt="Security">
+</p>
 
-**Önemli Not:** DS IPS'in felsefesi gereği "Otomatik Ban (İnfaz)" özelliği bilerek kapalıdır. Sistem tespiti, delil toplamayı ve istihbaratı kusursuz yapar ancak nihai ağdan atma (Ban) kararını sistem yöneticisine bırakır.
+<p align="center">
+  <strong>Gelişmiş Ağ Saldırı Tespit ve Önleme Sistemi & Siber Güvenlik Operasyon Merkezi (SOC)</strong><br>
+  Telif Hakkı (c) 2026 - Kadir Kırmacı
+</p>
 
 ---
 
-## 🚀 Öne Çıkan Özellikler
+## 🌟 Proje Özeti
+**DS-IPS**, yerel ağınızda (LAN) ve kablosuz ağınızda (Wi-Fi) meydana gelebilecek siber saldırıları, anormallikleri ve keşif (tarama) girişimlerini gerçek zamanlı olarak **tespit eden (IDS)** ve saldırganı ağdan tamamen **izole eden (IPS)** profesyonel bir güvenlik yazılımıdır. 
 
-### 1. 🕸️ Sıfır Güven (Zero-Trust) Tuzakları
-- **Honeytokens (Bubi Tuzakları):** Ağda korunmasız gibi görünen sahte "Şirket Şifreleri" dosyaları sunar. Bu dosyalara dokunan saldırganı anında fişler.
-- **Deep SSH Honeypot:** 22 numaralı portu açık bırakarak Brute-Force (Kaba Kuvvet) saldırılarını üzerine çeker ve saldırganın denediği parolaları kaydeder.
-- **Decoy Traffic (Beyaz Gürültü):** Wireshark veya Bettercap ile ağınızı dinleyen hacker'ları kör etmek için etrafa sahte DNS ve HTTP trafikleri saçar.
+Proje, yalnızca ağ paketlerini yakalamakla kalmaz, aynı zamanda sistem yöneticilerine **Premium Glassmorphism** tasarımlı, canlı bir Ağ Haritası (Live Topology) sunarak tüm ağı saniyeler içinde görselleştirir.
 
-### 2. 🌍 Küresel İstihbarat (Threat Intel & Geo-IP)
-- Ağdaki tüm cihazların dış bağlantılarını anlık takip eder. Cihazlarınız gizlice Düşman Devlet (Rusya, Çin vb.) sunucularına veri sızdırıyorsa **"Arka Kapı (Backdoor) Trojanı"** alarmı verir.
+---
 
-### 3. 🚨 Olay Yeri İnceleme (Automated Forensics)
-- Sistem kritik bir saldırı sezdiğinde (örn: Nmap port taraması), anında `tcpdump` tetikler ve saldırganın sonraki 60 saniyelik ham ağ trafiğini `.pcap` olarak kaydeder. Wireshark'ta adli bilişim (Forensic) incelemesi yapmanız için delil sunar.
-- Uçtan uca şifreli Telegram Entegrasyonu sayesinde, kırmızı alarmları anında cebinize gönderir.
+## 🚀 Neler Yapabilir? (Temel Özellikler)
 
-### 4. ⚔️ Ağ Kalkanları (Detection Engines)
-- **ARP Spoofing Koruması:** Ortadaki Adam (MitM) saldırılarını yakalar.
-- **Derin Port Taraması Tespiti:** SYN/XMAS taramalarını anında ifşa eder.
-- **DNS Sinkhole:** Zararlı yazılımlara giden DNS bağlantılarını işaretler.
+### 1. 🔍 Gelişmiş Saldırı Tespiti (IDS - Intrusion Detection)
+- **ARP Spoofing / Zehirlenmesi:** Ağdaki cihazların kimliğine bürünerek Ortadaki Adam (MitM) saldırısı yapmaya çalışan cihazları anında yakalar.
+- **Port ve Ağ Taramaları:** Nmap, Masscan gibi araçlarla yapılan `SYN`, `FIN`, `NULL`, `XMAS` ve `UDP` port taramalarını hız ve desen analizi ile tespit eder.
+- **Denial of Service (DoS):** Hedef sisteme yönelik aşırı SYN paketi veya UDP flood saldırılarını tespit edip oran limiti ile bloklar.
+- **Kablosuz Ağ (Wi-Fi) Tehditleri:** `Deauth` (Ağdan düşürme) saldırılarını, sahte ağ yayınlarını (Beacon Flood) ve Şeytani İkiz (Evil Twin) ağlarını tespit eder.
+- **Bubi Tuzakları (Canary Tokens):** Ağda paylaşılan sahte dosyalar (`sirket_sifreleri.pdf`, `banka_bilgileri.xlsx`) açılmaya veya indirilmeye çalışıldığında alarm verir.
+
+### 2. 🛡️ Acımasız Saldırı Önleme (IPS - Intrusion Prevention)
+- **Layer 3 (IP/MAC) Ban:** Saldırganı `iptables` ile çekirdek düzeyinde engeller.
+- **Layer 2 Ağ İzolasyonu (ARP Blackholing):** VPN, Proxy veya DNS değiştirmek saldırganı kurtarmaz! IPS, modemi ve saldırganı sahte (00:00:00:00:00:00) MAC adresleriyle zehirleyerek saldırganın modeme ve internete olan fiziksel/mantıksal erişimini tamamen keser.
+- **Akıllı Süreli Ban:** Otomatik tespit edilen saldırganlar için ban süresi belirlenebilir, süre sonunda kilit otomatik açılır.
+
+### 3. 🌐 Canlı SOC Arayüzü (Premium Dashboard)
+- **Gerçek Zamanlı Ağ Haritası (Vis.js):** Ağdaki cihazları (Modem, PC, Telefon) simgelerle haritalandırır. Güvenli cihazlar yeşil, şüpheliler sarı, tehlikeliler kırmızı ile işaretlenir. Uyuyan cihazlar haritadan akıllıca gizlenir.
+- **Socket.IO Entegrasyonu:** Alarmlar ve yeni cihazlar, sayfayı yenilemeye gerek kalmadan anında ekrana (canlı akışa) yansır.
+- **Glassmorphism UI:** Uzay mavisi animasyonlu arka plan (Grid), buzlu cam kart tasarımları, hover mikro-animasyonlar ve fütüristik renk paleti ile üst düzey profesyonel görünüm.
+
+### 4. 📲 Uzaktan Bildirim ve Raporlama
+- **Discord Webhook Entegrasyonu:** Ofiste değilken bile ağınıza bir saldırı olduğunda Discord sunucunuza saniyesinde kritik uyarı mesajları düşer.
+- **Sesli Alarmlar:** Kritik saldırılarda kontrol paneli (bilgisayar hoparlörü) üzerinden alarm sesleri çalarak operatörü uyarır.
+- **Adli Bilişim (PCAP) Kaydı:** Kritik (Kırmızı) seviye bir saldırı tespit edildiğinde, kanıt sunmak amacıyla saldırganın 60 saniyelik ağ trafiğini `tcpdump` ile PCAP dosyası olarak kaydeder.
+
+### 5. 🔒 Askeri Düzey Arayüz Güvenliği
+- **HTTPS (SSL/TLS) Zorunluluğu:** Sistem `Adhoc SSL` ile çalışır, Burp Suite gibi Man-in-the-Middle Proxy araçlarının trafiği arasına girmesini (HSTS, CSP ile) engeller.
+- **JavaScript Obfuscation & Anti-Debugger:** Arayüzün kaynak kodları tamamen şifrelenmiştir. F12 (DevTools), Sağ tık veya kısayollarla kodları incelemeye çalışanların tarayıcıları Anti-Debugger döngüsü ile kilitlenir.
+- **Brute-Force ve CSRF Koruması:** Panele yetkisiz girişleri önlemek için 3 yanlış şifre denemesinde IP adresi 30 dakika kitlenir.
 
 ---
 
 ## 🛠️ Kurulum ve Çalıştırma
 
 ### Gereksinimler
-Sistemin ağ paketlerini (Packet Sniffing) yakalayabilmesi için **Linux tabanlı bir işletim sistemi (Örn: Kali Linux, Ubuntu)** kullanılması zorunludur.
+- Linux Tabanlı İşletim Sistemi (Kali Linux, Arch, Ubuntu vb.)
+- Python 3.x
+- Root (`sudo`) yetkisi (IPS ve paket dinleme işlemleri için zorunludur)
 
-1. Projeyi indirin ve klasöre girin:
+### Başlatma
+1. Sistemdeki gerekli Python kütüphanelerini kurun: `pip install -r requirements.txt` (Eğer varsa)
+2. Uygulamayı başlatın:
 ```bash
-git clone https://github.com/KULLANICI_ADINIZ/ds-ips.git
-cd ds-ips
+sudo python3 main.py -i eth0 -m ips
 ```
+*(Kablosuz ağ dinlemesi yapmak için komutun sonuna `--wifi` ekleyebilirsiniz.)*
 
-2. Gerekli kütüphaneleri yükleyin:
-```bash
-sudo pip3 install -r requirements.txt
-```
-*(Eğer "externally-managed-environment" hatası alırsanız komutun sonuna `--break-system-packages` ekleyebilirsiniz).*
-
-3. Sistemi yönetici yetkileriyle (Root) başlatın:
-**Kablolu Bağlantı (Ethernet) için:**
-```bash
-sudo python3 web_main.py -i eth0
-```
-**Kablosuz Bağlantı (Wi-Fi) için:**
-```bash
-sudo python3 web_main.py -i wlan0 --wifi
-```
-
-4. Kurulum tamamlandıktan sonra tarayıcınızdan Web Paneline giriş yapın:
-👉 `http://127.0.0.1:5000` (Varsayılan Kullanıcı Adı: `admin` Şifre: `admin`)
+3. Tarayıcınızdan **https://localhost:5000** veya **https://127.0.0.1:5000** adresine gidin.
+4. İlk girişte tarayıcı SSL uyarısı verecektir (Gelişmiş > İlerle diyerek geçin).
+5. Terminalde yazan "Rastgele Üretilen" Kullanıcı Adı ve Şifre ile sisteme giriş yapın.
 
 ---
 
-## 📱 Telegram Alarm Kurulumu
-1. Telegram'da `@BotFather` ile yeni bir bot oluşturun ve **API Token**'ı alın.
-2. Telegram'da `@userinfobot` ile kendi **Chat ID**'nizi öğrenin.
-3. DS IPS Web Paneli -> Ayarlar menüsüne girip bu iki bilgiyi kaydedin.
-4. Test etmek için: `http://127.0.0.1:5000/sirket_sifreleri.pdf` adresine tıklayın ve telefonunuza düşen sireni dinleyin!
+## ⚖️ Yasal Uyarı ve Lisans
+Bu yazılım **Kadir Kırmacı** tarafından geliştirilmiş olup, tüm telif ve fikri mülkiyet hakları saklıdır. Herhangi bir şirkette, kurumda veya mekanda **izinsiz kullanımı, kodlarının değiştirilmesi veya kopyalanması kesinlikle yasaktır.**
 
----
-*DS IPS, açık kaynak siber güvenlik vizyonuyla geliştirilmiştir. Sorumluluk kullanıcıya aittir.*
+Yazılım "OLDUĞU GİBİ" sağlanmaktadır. Meydana gelebilecek ağ kesintilerinden, yasal yaptırımlardan veya fiziksel zararlardan geliştirici (Kadir Kırmacı) kesinlikle sorumlu tutulamaz. Detaylar için `LICENSE` dosyasına bakınız.
