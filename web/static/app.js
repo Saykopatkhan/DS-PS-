@@ -6,8 +6,11 @@
 let socket = null;
 
 // DS-01: Fetch WS Token before connecting
-fetch('/api/ws_token', {headers: {'X-Requested-With': 'XMLHttpRequest'}})
-    .then(r => r.json())
+fetch('/api/ws_token', {headers: {'X-Requested-With': 'XMLHttpRequest'}, credentials: 'same-origin'})
+    .then(r => {
+        if (!r.ok) throw new Error('Token fetch failed');
+        return r.json();
+    })
     .then(tokenData => {
         socket = io({ auth: { token: tokenData.token } });
 
@@ -43,7 +46,7 @@ fetch('/api/ws_token', {headers: {'X-Requested-With': 'XMLHttpRequest'}})
         });
 
         socket.on('ban_update', (data) => {
-            fetch('/api/bans')
+            fetch('/api/bans', {credentials: 'same-origin'})
                 .then(r => r.json())
                 .then(bans => renderBanList(bans));
 
@@ -69,8 +72,16 @@ fetch('/api/ws_token', {headers: {'X-Requested-With': 'XMLHttpRequest'}})
             if (data.success && data.records) {
                 renderDeviceList(data.records);
                 showNotification('Tarama tamamlandı', 'success');
+                
+                // Haritayı güncelle
+                if (typeof updateNetworkMap === "function") {
+                    updateNetworkMap(data.records);
+                }
             }
         });
+    })
+    .catch(err => {
+        console.error('Socket.io başlatılamadı:', err);
     });
 
 // Durum değişkenleri
@@ -84,7 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // İlk verileri yükle
 function loadInitialData() {
-    fetch('/api/alerts')
+    fetch('/api/alerts', {credentials: 'same-origin'})
         .then(r => r.json())
         .then(data => {
             if (data.length > 0) {
@@ -94,18 +105,18 @@ function loadInitialData() {
         })
         .catch(err => console.error('Alarmlar yüklenemedi:', err));
 
-    fetch('/api/bans')
+    fetch('/api/bans', {credentials: 'same-origin'})
         .then(r => r.json())
         .then(data => renderBanList(data))
         .catch(err => console.error('Banlar yüklenemedi:', err));
 
-    fetch('/api/stats')
+    fetch('/api/stats', {credentials: 'same-origin'})
         .then(r => r.json())
         .then(data => updateStats(data))
         .catch(err => console.error('İstatistikler yüklenemedi:', err));
         
     // Harita ve cihaz listesi için ilk cihazları çek
-    fetch('/api/records')
+    fetch('/api/records', {credentials: 'same-origin'})
         .then(r => r.json())
         .then(data => {
             if (typeof renderDeviceList === "function") renderDeviceList(data);
@@ -115,7 +126,7 @@ function loadInitialData() {
         
     // Cihaz listesini ve haritayı 15 saniyede bir otomatik güncelle
     setInterval(() => {
-        fetch('/api/records')
+        fetch('/api/records', {credentials: 'same-origin'})
             .then(r => r.json())
             .then(data => {
                 if (typeof renderDeviceList === "function") renderDeviceList(data);
@@ -329,7 +340,7 @@ function addBan() {
             document.getElementById('ban-ip').value = '';
             document.getElementById('ban-mac').value = '';
             document.getElementById('ban-reason').value = '';
-            fetch('/api/bans').then(r => r.json()).then(bans => renderBanList(bans));
+            fetch('/api/bans', {credentials: 'same-origin'}).then(r => r.json()).then(bans => renderBanList(bans));
             showNotification('Engelleme eklendi!', 'success');
         }
     })
@@ -345,7 +356,7 @@ function removeBan(ip, mac) {
     .then(r => r.json())
     .then(data => {
         if (data.success) {
-            fetch('/api/bans').then(r => r.json()).then(bans => renderBanList(bans));
+            fetch('/api/bans', {credentials: 'same-origin'}).then(r => r.json()).then(bans => renderBanList(bans));
             showNotification('Engelleme kaldırıldı.', 'warning');
         }
     })
@@ -459,25 +470,7 @@ function runNetworkScan() {
         });
 }
 
-// Socket event for scan completion
-const socket = io({ auth: { token: wsAuthToken } });
-socket.on('scan_complete', (data) => {
-    const btn = document.getElementById('scan-btn');
-    const list = document.getElementById('scanner-list');
-    
-    btn.disabled = false;
-    btn.textContent = 'Taramayı Başlat';
-    
-    if (data.success && data.records) {
-        renderDeviceList(data.records);
-        showNotification('Tarama tamamlandı', 'success');
-        
-        // Haritayı güncelle
-        if (typeof updateNetworkMap === "function") {
-            updateNetworkMap(data.records);
-        }
-    }
-});
+// Socket event for scan completion is handled at the top
 
 function renderDeviceList(records) {
     const list = document.getElementById('scanner-list');
@@ -549,7 +542,7 @@ function escapeAttr(text) {
 
 // ---- Ayarlar (Settings) Yönetimi ----
 function openSettings() {
-    fetch('/api/settings')
+    fetch('/api/settings', {credentials: 'same-origin'})
         .then(r => r.json())
         .then(data => {
             document.getElementById('setting-discord').value = data.discord_webhook || '';

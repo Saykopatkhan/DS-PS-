@@ -185,7 +185,7 @@ class IPSWebApp:
 
         @self.app.route('/')
         def index():
-            return render_template('index.html')
+            return render_template('index.html', current_interface=self.interface)
 
         @self.app.route('/api/alerts')
         def get_alerts():
