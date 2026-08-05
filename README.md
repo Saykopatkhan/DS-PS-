@@ -41,7 +41,7 @@ Proje, yalnızca ağ paketlerini yakalamakla kalmaz, aynı zamanda sistem yönet
 - **Glassmorphism UI:** Uzay mavisi animasyonlu arka plan (Grid), buzlu cam kart tasarımları, hover mikro-animasyonlar ve fütüristik renk paleti ile üst düzey profesyonel görünüm.
 
 ### 4. 📲 Uzaktan Bildirim ve Raporlama
-- **Discord Webhook Entegrasyonu:** Ofiste değilken bile ağınıza bir saldırı olduğunda Discord sunucunuza saniyesinde kritik uyarı mesajları düşer.
+- **Discord & Telegram Entegrasyonu:** Ofiste değilken bile ağınıza bir saldırı olduğunda Discord sunucunuza veya Telegram botunuza saniyesinde kritik uyarı mesajları düşer.
 - **Sesli Alarmlar:** Kritik saldırılarda kontrol paneli (bilgisayar hoparlörü) üzerinden alarm sesleri çalarak operatörü uyarır.
 - **Adli Bilişim (PCAP) Kaydı:** Kritik (Kırmızı) seviye bir saldırı tespit edildiğinde, kanıt sunmak amacıyla saldırganın 60 saniyelik ağ trafiğini `tcpdump` ile PCAP dosyası olarak kaydeder.
 
