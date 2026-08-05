@@ -491,15 +491,19 @@ function renderDeviceList(records) {
         let osType = escapeHtml(device.os_type || 'Bilinmiyor');
         let score = device.threat_score || 0;
         
-        // Tehdit Skoru Renklendirmesi
         let scoreColor = '#8892b0';
         if (score > 20) scoreColor = '#ff4444';
         else if (score > 0) scoreColor = '#ffaa00';
         
+        // Aktif / Pasif (15 Dakika sınırı)
+        let lastSeenDate = new Date(device.last_seen.replace(' ', 'T'));
+        let isInactive = (new Date() - lastSeenDate) > 15 * 60 * 1000;
+        let statusBadge = isInactive ? '<span style="color: #8892b0; font-size: 0.8rem; margin-left: 10px;">⚪ Pasif</span>' : '<span style="color: #64ffda; font-size: 0.8rem; margin-left: 10px;">🟢 Aktif</span>';
+        
         html += `
-        <div class="ban-item" style="border-left: 3px solid ${score > 20 ? '#ff4444' : '#00f0ff'}; flex-direction: column; align-items: flex-start; padding: 10px;">
+        <div class="ban-item" style="border-left: 3px solid ${isInactive ? '#444' : (score > 20 ? '#ff4444' : '#00f0ff')}; flex-direction: column; align-items: flex-start; padding: 10px; opacity: ${isInactive ? '0.6' : '1'};">
             <div style="display: flex; justify-content: space-between; width: 100%; margin-bottom: 5px;">
-                <span class="mono" style="font-size: 1rem; font-weight: bold; color: #e6f1ff;">${escapeHtml(device.ip_address)}</span>
+                <span class="mono" style="font-size: 1rem; font-weight: bold; color: #e6f1ff;">${escapeHtml(device.ip_address)} ${statusBadge}</span>
                 <button class="btn btn-sm btn-danger" onclick="quickBan('${escapeAttr(device.ip_address)}', '${escapeAttr(device.mac_address)}')">
                     Engelle
                 </button>
@@ -509,7 +513,8 @@ function renderDeviceList(records) {
                 <div><span style="color: #64ffda;">OS Tipi:</span> ${osType}</div>
                 <div><span style="color: #64ffda;">Marka:</span> ${vendor}</div>
                 <div><span style="color: #64ffda;">Hostname:</span> ${hostname}</div>
-                <div style="grid-column: span 2;"><span style="color: #64ffda;">Tehdit Skoru:</span> <strong style="color: ${scoreColor}">${score}</strong></div>
+                <div><span style="color: #64ffda;">Son Görülme:</span> ${escapeHtml(device.last_seen)}</div>
+                <div><span style="color: #64ffda;">Tehdit Skoru:</span> <strong style="color: ${scoreColor}">${score}</strong></div>
             </div>
         </div>
         `;
@@ -647,16 +652,22 @@ function updateNetworkMap(records) {
         const vendor = device.vendor || 'Bilinmiyor';
         const os = device.os_type || 'Bilinmiyor';
         
+        // Aktif / Pasif (15 Dakika)
+        let lastSeenDate = new Date(device.last_seen.replace(' ', 'T'));
+        let isInactive = (new Date() - lastSeenDate) > 15 * 60 * 1000;
+
         // Node rengini tehlikeye göre belirle
         let color = '#8892b0';
-        if (device.threat_score > 20) color = '#ff4444'; // Kırmızı (Tehlike)
+        if (isInactive) color = '#444444'; // Pasif cihaz gri
+        else if (device.threat_score > 20) color = '#ff4444'; // Kırmızı (Tehlike)
         else if (device.threat_score > 0) color = '#ffaa00'; // Sarı (Şüpheli)
         else color = '#64ffda'; // Yeşil (Güvenli)
         
         let iconCode = '💻';
-        if (os.toLowerCase().includes('apple') || os.toLowerCase().includes('iphone')) iconCode = '📱';
-        if (os.toLowerCase().includes('android')) iconCode = '📱';
-        if (vendor.toLowerCase().includes('router')) iconCode = '🌐';
+        if (isInactive) iconCode = '💤';
+        else if (os.toLowerCase().includes('apple') || os.toLowerCase().includes('iphone')) iconCode = '📱';
+        else if (os.toLowerCase().includes('android')) iconCode = '📱';
+        else if (vendor.toLowerCase().includes('router')) iconCode = '🌐';
         
         if (!nodes.get(ip)) {
             nodes.add({
