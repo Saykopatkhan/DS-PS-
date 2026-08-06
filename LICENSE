@@ -1,17 +1,56 @@
-ÖZEL YAZILIM LİSANS SÖZLEŞMESİ (PROPRIETARY LICENSE)
+========================================================================
+    END-USER LICENSE AGREEMENT (EULA) / SON KULLANICI LİSANS SÖZLEŞMESİ
+========================================================================
 
-Telif Hakkı (c) 2026 - Kadir Kırmacı
+Copyright (c) 2026 Kadir Kırmacı. All Rights Reserved.
+Telif Hakkı (c) 2026 Kadir Kırmacı. Tüm Hakları Saklıdır.
 
-TÜM HAKLARI SAKLIDIR.
+IMPORTANT-READ CAREFULLY: This End-User License Agreement ("EULA") is a 
+legal agreement between you (either an individual or a single entity) 
+and Kadir Kırmacı for the DS-IPS software product.
 
-Bu yazılım (DS-IPS) ve beraberindeki tüm kaynak kodları, tasarımlar ve dokümanların mülkiyeti, telif hakları ve kullanım hakları tamamen KADİR KIRMACI'ya aittir.
+ÖNEMLİ-DİKKATLİCE OKUYUN: Bu Son Kullanıcı Lisans Sözleşmesi ("EULA"), 
+DS-IPS yazılım ürünü için sizinle (şahıs veya kurum) Kadir Kırmacı 
+arasındaki yasal bir sözleşmedir.
 
-KULLANIM ŞARTLARI VE KISITLAMALAR:
-1. Bu yazılımın herhangi bir ticari mekanda, kurumda, şirkette, ağda veya işletmede yazılı izin alınmaksızın kullanılması, kurulması veya çalıştırılması KESİNLİKLE YASAKTIR.
-2. Bu yazılımın kopyalanması, çoğaltılması, kaynak kodlarının değiştirilmesi, tersine mühendislik yapılması veya izinsiz dağıtılması YASAKTIR.
-3. Bu yazılım sadece yasal ve yetkili olduğunuz ağlarda savunma/eğitim amaçlı kullanım için tasarlanmıştır.
+------------------------------------------------------------------------
+1. GRANT OF LICENSE / LİSANS VERME VE KISITLAMALAR
+------------------------------------------------------------------------
+This software is strictly PROPRIETARY. You are NOT allowed to use, install, 
+or operate this software in any commercial establishment, institution, 
+company, or enterprise network without EXPLICIT WRITTEN PERMISSION from 
+Kadir Kırmacı. 
 
-YASAL SORUMLULUK REDDİ:
-Bu yazılım "OLDUĞU GİBİ" (AS IS) sağlanmaktadır. Yazar (Kadir Kırmacı), bu yazılımın kullanımından veya yanlış kullanımından doğabilecek doğrudan, dolaylı, kasıtsız veya tesadüfi hiçbir maddi/manevi zarardan, ağ kesintisinden veya yasal ihlalden KESİNLİKLE SORUMLU TUTULAMAZ. 
+Bu yazılım tamamen ÖZEL MÜLKİYETTİR (Proprietary). Kadir Kırmacı'dan 
+AÇIK YAZILI İZİN alınmaksızın bu yazılımın herhangi bir ticari mekanda, 
+kurumda, şirkette veya işletme ağında kullanılması, kurulması veya 
+çalıştırılması KESİNLİKLE YASAKTIR.
 
-Bu yazılımı kullanan, indiren veya kuran her şahıs, cihaz veya kurum; bu aracı kullandıkları ağlarda meydana gelebilecek tüm siber ve fiziksel zararların, ağ ihlallerinin ve yasal yaptırımların TEK SORUMLUSU olduğunu peşinen kabul, beyan ve taahhüt eder.
+------------------------------------------------------------------------
+2. REPRODUCTION AND DISTRIBUTION / ÇOĞALTMA VE DAĞITIM
+------------------------------------------------------------------------
+You may not copy, reproduce, distribute, reverse-engineer, modify, or 
+create derivative works of this software. 
+
+Bu yazılımın izinsiz kopyalanması, çoğaltılması, dağıtılması, tersine 
+mühendislik (reverse-engineering) yapılması veya kaynak kodlarının 
+değiştirilmesi YASAKTIR.
+
+------------------------------------------------------------------------
+3. LIMITATION OF LIABILITY / YASAL SORUMLULUK REDDİ
+------------------------------------------------------------------------
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDER "AS IS" AND ANY 
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED 
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY 
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES.
+
+BU YAZILIM "OLDUĞU GİBİ" (AS IS) SAĞLANMAKTADIR. Yazar (Kadir Kırmacı), 
+bu yazılımın kullanımından veya yanlış kullanımından doğabilecek doğrudan, 
+dolaylı, kasıtsız veya tesadüfi hiçbir maddi/manevi zarardan, ağ 
+kesintisinden veya yasal ihlalden KESİNLİKLE SORUMLU TUTULAMAZ. 
+
+Bu yazılımı kullanan, indiren veya kuran her şahıs, cihaz veya kurum; 
+bu aracı kullandıkları ağlarda meydana gelebilecek tüm siber ve fiziksel 
+zararların, ağ ihlallerinin ve yasal yaptırımların TEK SORUMLUSU olduğunu 
+peşinen kabul, beyan ve taahhüt eder.
