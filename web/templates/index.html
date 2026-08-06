@@ -165,8 +165,33 @@
             </div>
         </section>
 
+        <!-- GENERAL TRAFFIC MONITOR (DS-IPS V2) -->
+        <section class="traffic-row" style="margin-top: 20px;">
+            <div class="traffic-panel" style="background-color: #112240; border-radius: 8px; border: 1px solid #233554; padding: 20px;">
+                <div class="panel-header" style="margin-bottom: 10px;">
+                    <h2><i class="fas fa-eye"></i> Genel Ağ Gözetleme (Tüm Cihazlar)</h2>
+                    <button class="btn btn-sm" onclick="document.getElementById('general-traffic-body').innerHTML=''">Temizle</button>
+                </div>
+                <div style="height: 300px; overflow-y: auto; background-color: #0a192f; border-radius: 4px; border: 1px solid #1d2d50;">
+                    <table style="width:100%; border-collapse:collapse; color:#e2e8f0; font-family:var(--font-mono); font-size:13px;">
+                        <thead>
+                            <tr style="border-bottom:1px solid #233554; text-align:left;">
+                                <th style="padding:10px; color:#64ffda;">Zaman</th>
+                                <th style="padding:10px; color:#64ffda;">Kaynak IP</th>
+                                <th style="padding:10px; color:#64ffda;">Domain / Hedef</th>
+                                <th style="padding:10px; color:#64ffda;">Tip</th>
+                            </tr>
+                        </thead>
+                        <tbody id="general-traffic-body">
+                            <!-- Traffic logs will be inserted here dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
         <!-- MAIN CONTENT: ALERTS + SIDEBAR -->
-        <section class="content-row">
+        <section class="content-row" style="margin-top: 20px;">
             <!-- ALERT FEED -->
             <div class="alerts-panel">
                 <div class="panel-header">
@@ -204,7 +229,7 @@
                     <div class="panel-header">
                         <h2>🚫 Aktif Engellemeler</h2>
                     </div>
-                    <div class="ban-form" style="display:none;">
+                    <div class="ban-form">
                         <input type="text" id="ban-ip" class="input-field" placeholder="IP Adresi">
                         <input type="text" id="ban-mac" class="input-field" placeholder="MAC Adresi">
                         <input type="text" id="ban-reason" class="input-field" placeholder="Neden">
