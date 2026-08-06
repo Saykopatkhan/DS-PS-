@@ -8,6 +8,13 @@ import os
 import sys
 from colorama import init, Fore, Style
 
+# Otomatik Aktif Arayüz Tespiti (Örn: wlan0, eth0)
+try:
+    from scapy.all import conf
+    default_iface = conf.route.route("0.0.0.0")[3]
+except Exception:
+    default_iface = 'eth0'
+
 init(autoreset=True)
 
 
@@ -25,8 +32,8 @@ def print_banner():
 def main():
     parser = argparse.ArgumentParser(
         description='DS IPS Web Panel - Gerçek Zamanlı Dashboard')
-    parser.add_argument('-i', '--interface', default='eth0',
-                        help='Ağ arayüzü')
+    parser.add_argument('-i', '--interface', default=default_iface,
+                        help=f'Ağ arayüzü (Varsayılan: {default_iface})')
     parser.add_argument('-m', '--mode', choices=['ids', 'ips'], default='ips',
                         help='Çalışma modu (ids: sadece tespit, ips: tespit + önleme)')
     parser.add_argument('--wifi', action='store_true',
