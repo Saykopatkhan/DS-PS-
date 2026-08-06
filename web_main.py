@@ -27,7 +27,7 @@ def main():
         description='DS IPS Web Panel - Gerçek Zamanlı Dashboard')
     parser.add_argument('-i', '--interface', default='eth0',
                         help='Ağ arayüzü')
-    parser.add_argument('-m', '--mode', choices=['ids', 'ips'], default='ids',
+    parser.add_argument('-m', '--mode', choices=['ids', 'ips'], default='ips',
                         help='Çalışma modu (ids: sadece tespit, ips: tespit + önleme)')
     parser.add_argument('--wifi', action='store_true',
                         help='WiFi saldırı tespiti (monitor mode gerektirir)')

