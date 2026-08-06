@@ -1,3 +1,10 @@
+# ========================================================================
+# DS-IPS (Premium SOC Edition)
+# Bu proje Kadir Kırmacı'ya aittir. 
+# Copyright (c) 2026 Kadir Kırmacı. All Rights Reserved.
+# Ticari kullanımı ve tersine mühendislik yapılması kesinlikle yasaktır.
+# ========================================================================
+
 #!/usr/bin/env python3
 import sys
 import os

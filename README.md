@@ -78,7 +78,29 @@ sudo python3 main.py -i eth0 -m ips
 
 ---
 
-## ⚖️ Yasal Uyarı ve Lisans
-Bu yazılım **Kadir Kırmacı** tarafından geliştirilmiş olup, tüm telif ve fikri mülkiyet hakları saklıdır. Herhangi bir şirkette, kurumda veya mekanda **izinsiz kullanımı, kodlarının değiştirilmesi veya kopyalanması kesinlikle yasaktır.**
+![License](https://img.shields.io/badge/License-Custom_NonCommercial-red.svg)
 
-Yazılım "OLDUĞU GİBİ" sağlanmaktadır. Meydana gelebilecek ağ kesintilerinden, yasal yaptırımlardan veya fiziksel zararlardan geliştirici (Kadir Kırmacı) kesinlikle sorumlu tutulamaz. Detaylar için `LICENSE` dosyasına bakınız.
+# DS-IPS (Premium SOC Edition)
+**© 2026 Kadir Kırmacı. Tüm Hakları Saklıdır.**
+
+> 💡 **Mülkiyet Bildirimi:** Bu proje tamamen **Kadir Kırmacı**'ya aittir ve onun tarafından tasarlanıp geliştirilmiştir. 
+
+## ⚖️ Lisans ve Kullanım Şartları
+
+Bu proje **DS-IPS Özel Lisansı (Non-Commercial & Modifiable)** ile korunmaktadır. Projeyi kullanan veya kodları inceleyen herkes bu şartları kabul etmiş sayılır.
+
+**✅ İzin Verilenler (Serbest Kullanım ve Geliştirme):**
+* Kişisel bilgisayarlarda, ev ağlarında ve eğitim laboratuvarlarında ücretsiz kullanım.
+* Projeyi eğitim amaçlı inceleme, kaynak kodunu geliştirme ve kişisel ihtiyaçlara göre özelleştirme.
+
+**❌ Kesinlikle Yasak Olanlar:**
+* **Ticari Kullanım:** Bu yazılımın (veya tarafınızca değiştirilmiş türevlerinin) herhangi bir gelir elde edilen ortamda (şirketler, kurumlar, ticari ağlar vb.) kullanılması, satılması veya hizmet olarak sunulması KESİNLİKLE YASAKTIR.
+* **Tersine Mühendislik:** Projenin güvenlik mekanizmalarını atlatmaya çalışmak, korumalı modülleri parçalamak (disassembly) veya tersine mühendislik yapmak yasaktır.
+
+> ⚠️ **Bağımlılıklar Hakkında Önemli Not:** 
+> Yasal uyumluluk gereği, bu proje `Scapy` gibi harici kütüphaneleri kaynak koduna gömülü (bundle) olarak barındırmaz. Aracı çalıştırmadan önce bağımlılıkları kendi sisteminize kurmanız gerekmektedir:
+> ```bash
+> pip install -r requirements.txt
+> ```
+
+Tüm yasal kısıtlamalar ve detaylar için lütfen proje dizinindeki [LICENSE](LICENSE) dosyasını inceleyiniz.

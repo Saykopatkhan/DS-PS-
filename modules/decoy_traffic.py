@@ -1,3 +1,10 @@
+# ========================================================================
+# DS-IPS (Premium SOC Edition)
+# Bu proje Kadir Kırmacı'ya aittir. 
+# Copyright (c) 2026 Kadir Kırmacı. All Rights Reserved.
+# Ticari kullanımı ve tersine mühendislik yapılması kesinlikle yasaktır.
+# ========================================================================
+
 """
 Decoy Traffic Generator (Beyaz Gürültü Üretici)
 Ağ dinleyen saldırganları (Sniffer) yanıltmak için sahte DNS ve HTTP trafiği oluşturur.
