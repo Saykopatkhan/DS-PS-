@@ -88,24 +88,21 @@ class ARPDetector:
                     severity='high'
                 )
 
-    def _get_local_ip(self):
-        import socket
+    def _get_local_ips(self):
+        import subprocess
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(('10.255.255.255', 1))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
+            # Sistemdeki tüm yerel IP'leri (wlan0, eth0 vb.) döndürür
+            return subprocess.getoutput('hostname -I').split()
         except Exception:
-            return '127.0.0.1'
+            return ['127.0.0.1']
 
     def _check_arp_flood(self):
         """ARP Flood ve Sniffing tespiti."""
         current_time = time.time()
         if current_time - self.last_reset > self.detection_window:
-            local_ip = self._get_local_ip()
+            local_ips = self._get_local_ips()
             for ip in set(self.arp_request_count.keys()).union(set(self.arp_reply_count.keys())):
-                if ip == local_ip:
+                if ip in local_ips:
                     continue # Sistemin kendi yaptığı meşru ağ taramalarını atla
                     
                 total = self.arp_request_count[ip] + self.arp_reply_count[ip]
