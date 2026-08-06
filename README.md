@@ -45,7 +45,12 @@ Proje, yalnızca ağ paketlerini yakalamakla kalmaz, aynı zamanda sistem yönet
 - **Sesli Alarmlar:** Kritik saldırılarda kontrol paneli (bilgisayar hoparlörü) üzerinden alarm sesleri çalarak operatörü uyarır.
 - **Adli Bilişim (PCAP) Kaydı:** Kritik (Kırmızı) seviye bir saldırı tespit edildiğinde, kanıt sunmak amacıyla saldırganın 60 saniyelik ağ trafiğini `tcpdump` ile PCAP dosyası olarak kaydeder.
 
-### 5. 🔒 Askeri Düzey Arayüz Güvenliği
+### 5. ⚡ Performans ve Otonom Optimizasyon (V2 Özellikleri)
+- **Akıllı Çöpçü (Garbage Collector):** Veritabanının şişmesini engellemek için, ağdaki cihazların ürettiği DNS (girilen site) loglarını tam 10 dakika sonra saniyesi saniyesine otomatik olarak kalıcı siler. Sistem yıllarca açık kalsa bile disk veya RAM dolmaz.
+- **Dinamik Ağ Gözetleme (Dynamic UI):** Paneldeki aktif cihazlar listesi, son 10 dakika içerisinde sinyal vermeyen (uyuyan veya ağdan kopan) cihazları arayüzden tamamen gizleyerek operatörün sadece o anki "Canlı" cihazlara odaklanmasını sağlar.
+- **False-Positive Koruması:** Sistemin kendi yaptığı periyodik ağ taramalarını (ARP) ve modemin DNS yanıt portlarını (53, 67, 68) beyaz listeye (Whitelist) alarak, kendi kendine sahte UDP Scan veya ARP DDoS alarmı üretmesini engeller. Sadece gerçek tehditlere odaklanır.
+
+### 6. 🔒 Askeri Düzey Arayüz Güvenliği
 - **HTTPS (SSL/TLS) Zorunluluğu:** Sistem `Adhoc SSL` ile çalışır, Burp Suite gibi Man-in-the-Middle Proxy araçlarının trafiği arasına girmesini (HSTS, CSP ile) engeller.
 - **JavaScript Obfuscation & Anti-Debugger:** Arayüzün kaynak kodları tamamen şifrelenmiştir. F12 (DevTools), Sağ tık veya kısayollarla kodları incelemeye çalışanların tarayıcıları Anti-Debugger döngüsü ile kilitlenir.
 - **Brute-Force ve CSRF Koruması:** Panele yetkisiz girişleri önlemek için 3 yanlış şifre denemesinde IP adresi 30 dakika kitlenir.
