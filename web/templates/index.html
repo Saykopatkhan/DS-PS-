@@ -252,6 +252,33 @@
         </div>
     </div>
 
+    <!-- TRAFFIC MONITOR MODAL (DS-IPS V2) -->
+    <div id="traffic-modal" class="modal" style="display:none; position:fixed; z-index:2000; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.85); backdrop-filter:blur(5px);">
+        <div class="modal-content" style="background-color:#0a192f; border:1px solid #64ffda; border-radius:12px; margin:5% auto; width:80%; max-width:800px; max-height:80vh; display:flex; flex-direction:column; box-shadow: 0 0 30px rgba(100,255,218,0.2);">
+            <div style="padding:20px; border-bottom:1px solid #1d2d50; display:flex; justify-content:space-between; align-items:center;">
+                <h2 style="margin:0; color:#64ffda; font-family:var(--font-mono);"><i class="fas fa-eye"></i> Ağ Gözetleme (Traffic Monitor) - <span id="traffic-ip">IP</span></h2>
+                <button onclick="closeTrafficModal()" style="background:none; border:none; color:#ff4444; font-size:24px; cursor:pointer;">&times;</button>
+            </div>
+            <div style="padding:20px; flex-grow:1; overflow-y:auto;">
+                <div style="margin-bottom:15px; color:#8892b0; font-size:14px;">
+                    <i class="fas fa-info-circle"></i> Bu panel cihazın ziyaret ettiği domainleri ve sunucuları (DNS/SNI) canlı olarak gösterir.
+                </div>
+                <table style="width:100%; border-collapse:collapse; color:#e2e8f0; font-family:var(--font-mono); font-size:14px;">
+                    <thead>
+                        <tr style="border-bottom:1px solid #233554; text-align:left;">
+                            <th style="padding:10px; color:#64ffda;">Zaman</th>
+                            <th style="padding:10px; color:#64ffda;">Domain / Hedef</th>
+                            <th style="padding:10px; color:#64ffda;">Tip</th>
+                        </tr>
+                    </thead>
+                    <tbody id="traffic-table-body">
+                        <!-- Traffic logs will be inserted here dynamically -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <footer class="footer">
         <span>DS IPS v1.0 | Ağ Saldırı Tespit & Önleme Sistemi</span>
     </footer>

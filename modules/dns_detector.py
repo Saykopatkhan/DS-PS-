@@ -3,7 +3,7 @@ DNS Tunneling ve Veri Sızdırma (Exfiltration) tespit modülü.
 """
 import time
 from collections import defaultdict
-from scapy.all import DNS, DNSQR, IP
+from scapy.all import DNS, DNSQR, IP, Ether
 from core.database import Database
 from utils.sound import SoundAlert
 
@@ -26,7 +26,15 @@ class DNSDetector:
                 src_ip = packet[IP].src
                 qname = packet[DNSQR].qname.decode('utf-8', errors='ignore')
                 
+                # Sitenin sonundaki noktayı temizle (Örn: youtube.com. -> youtube.com)
+                clean_domain = qname.rstrip('.')
+                
                 self.query_count[src_ip] += 1
+                
+                # Yeni özellik: Cihazın girdiği siteyi Traffic Monitor için veritabanına kaydet
+                src_mac = packet.getlayer(Ether).src if packet.haslayer(Ether) else 'N/A'
+                if clean_domain:
+                    self.db.add_dns_log(src_ip, src_mac, clean_domain, record_type='DNS')
                 
                 # Exfiltration (Tunneling) kontrolü: Domainin sub-kısmı aşırı uzun mu?
                 if qname:

@@ -321,6 +321,13 @@ class IPSWebApp:
             records = self.db.get_ip_mac_records(limit=100)
             return jsonify(records)
             
+        @self.app.route('/api/dns_logs', defaults={'ip': None})
+        @self.app.route('/api/dns_logs/<ip>')
+        def get_dns_logs_api(ip):
+            limit = request.args.get('limit', 100, type=int)
+            logs = self.db.get_dns_logs(ip=ip, limit=limit)
+            return jsonify(logs)
+            
         @self.app.route('/api/scan', methods=['POST'])
         def run_network_scan():
             try:

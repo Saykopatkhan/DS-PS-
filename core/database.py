@@ -108,6 +108,17 @@ class Database:
                     value TEXT
                 )
             ''')
+            
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS dns_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    src_ip TEXT,
+                    src_mac TEXT,
+                    domain TEXT,
+                    record_type TEXT DEFAULT 'DNS'
+                )
+            ''')
             self.conn.commit()
 
     def update_ip_mac(self, ip, mac, vendor='Bilinmiyor', hostname='Bilinmiyor', os_type='Bilinmiyor'):
@@ -356,6 +367,35 @@ class Database:
                 VALUES (?, ?)
             ''', (key, value))
             self.conn.commit()
+
+    def add_dns_log(self, src_ip, src_mac, domain, record_type='DNS'):
+        """Bir cihazın girdiği site/domain kaydını ekler."""
+        with self.lock:
+            self.cursor.execute('''
+                INSERT INTO dns_logs (src_ip, src_mac, domain, record_type)
+                VALUES (?, ?, ?, ?)
+            ''', (src_ip, src_mac, domain, record_type))
+            self.conn.commit()
+            
+            # WebSocket ile ön yüze canlı olarak fırlat
+            if self.socketio:
+                log_data = {
+                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'src_ip': src_ip,
+                    'src_mac': src_mac,
+                    'domain': domain,
+                    'record_type': record_type
+                }
+                self.socketio.emit('new_dns_log', log_data)
+                
+    def get_dns_logs(self, ip=None, limit=50):
+        """Domain erişim geçmişini getirir (İsteğe bağlı IP filtreli)."""
+        with self.lock:
+            if ip:
+                self.cursor.execute('SELECT * FROM dns_logs WHERE src_ip = ? ORDER BY timestamp DESC LIMIT ?', (ip, limit))
+            else:
+                self.cursor.execute('SELECT * FROM dns_logs ORDER BY timestamp DESC LIMIT ?', (limit,))
+            return [dict(row) for row in self.cursor.fetchall()]
 
     def close(self):
         """Veritabanı bağlantısını kapatır."""
