@@ -1,4 +1,4 @@
-<h1 align="center">🇹🇷 DS-IPS (Intrusion Prevention System) - Premium SOC Edition</h1>
+<h1 align="center">🛡️🇹🇷 DS-IPS (Intrusion Prevention System) - Premium SOC Edition</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Version-2.6-00e5ff.svg?style=for-the-badge&logo=appveyor" alt="Version">
