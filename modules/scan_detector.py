@@ -55,10 +55,13 @@ class ScanDetector:
                 self.connection_timestamps[src_ip].append(time.time())
                 
             elif packet.haslayer(UDP):
+                src_port = packet[UDP].sport
                 dst_port = packet[UDP].dport
-                self.udp_count[src_ip][dst_port] += 1
-                self._check_udp_scan(src_ip)
-                self.connection_timestamps[src_ip].append(time.time())
+                # DNS (53) ve DHCP (67, 68) trafiği UDP tarama alarmı üretmemeli
+                if src_port not in [53, 67, 68] and dst_port not in [53, 67, 68]:
+                    self.udp_count[src_ip][dst_port] += 1
+                    self._check_udp_scan(src_ip)
+                    self.connection_timestamps[src_ip].append(time.time())
 
     def _check_syn_scan(self, src_ip):
         """SYN Scan tespiti."""

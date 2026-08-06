@@ -81,15 +81,30 @@ class ARPDetector:
                     severity='high'
                 )
 
+    def _get_local_ip(self):
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(('10.255.255.255', 1))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return '127.0.0.1'
+
     def _check_arp_flood(self):
         """ARP Flood ve Sniffing tespiti."""
         current_time = time.time()
         if current_time - self.last_reset > self.detection_window:
+            local_ip = self._get_local_ip()
             for ip in set(self.arp_request_count.keys()).union(set(self.arp_reply_count.keys())):
+                if ip == local_ip:
+                    continue # Sistemin kendi yaptığı meşru ağ taramalarını atla
+                    
                 total = self.arp_request_count[ip] + self.arp_reply_count[ip]
                 if total > self.arp_threshold:
                     self.db.add_alert(
-                        alert_type='ARP Flood/Sniffing',
+                        alert_type='ARP Storm (DDoS)',
                         src_ip=ip, src_mac='N/A',
                         dst_ip='N/A', dst_mac='N/A',
                         description=f'Kaynak {ip} - {total} ARP paketi / {self.detection_window}s pencerede',
