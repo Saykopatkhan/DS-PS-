@@ -53,6 +53,7 @@ class ScanDetector:
                     self._check_null_scan(src_ip)
                     
                 self.connection_timestamps[src_ip].append(time.time())
+                self._check_flood(src_ip)
                 
             elif packet.haslayer(UDP):
                 src_port = packet[UDP].sport
@@ -62,6 +63,25 @@ class ScanDetector:
                     self.udp_count[src_ip][dst_port] += 1
                     self._check_udp_scan(src_ip)
                     self.connection_timestamps[src_ip].append(time.time())
+                    self._check_flood(src_ip)
+
+    def _check_flood(self, src_ip):
+        """DoS / Flood tespiti (Aynı IP'den aşırı paket gelmesi)."""
+        # Son 1 saniyedeki paket sayısını kontrol et
+        current_time = time.time()
+        recent_packets = [t for t in self.connection_timestamps[src_ip] if current_time - t < 1.0]
+        self.connection_timestamps[src_ip] = recent_packets
+        
+        if len(recent_packets) > 500: # Saniyede 500 paket DoS kabul edilir
+            self.db.add_alert(
+                alert_type='SYN/UDP Flood (DoS)',
+                src_ip=src_ip, src_mac='N/A',
+                dst_ip='N/A', dst_mac='N/A',
+                description=f'Kaynak {src_ip} - Saniyede {len(recent_packets)} paket (Flood Saldırısı!)',
+                severity='critical'
+            )
+            if self.blocker and self.auto_ban:
+                self.blocker.block_ip(src_ip)
 
     def _check_syn_scan(self, src_ip):
         """SYN Scan tespiti."""
