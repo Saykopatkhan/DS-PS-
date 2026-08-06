@@ -1,7 +1,7 @@
 import sqlite3
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from colorama import Fore, Style
 
 
@@ -368,8 +368,17 @@ class Database:
             ''', (key, value))
             self.conn.commit()
 
+    def cleanup_old_dns_logs(self):
+        """10 dakikadan eski DNS trafik geçmişini temizler."""
+        with self.lock:
+            # SQLite CURRENT_TIMESTAMP UTC kullanır, bu yüzden datetime.utcnow() kullanmalıyız.
+            ten_mins_ago = (datetime.utcnow() - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+            self.cursor.execute("DELETE FROM dns_logs WHERE timestamp < ?", (ten_mins_ago,))
+            self.conn.commit()
+
     def add_dns_log(self, src_ip, src_mac, domain, record_type='DNS'):
         """Bir cihazın girdiği site/domain kaydını ekler."""
+        self.cleanup_old_dns_logs() # Her eklemede eskiyi temizle
         with self.lock:
             self.cursor.execute('''
                 INSERT INTO dns_logs (src_ip, src_mac, domain, record_type)
@@ -390,6 +399,7 @@ class Database:
                 
     def get_dns_logs(self, ip=None, limit=50):
         """Domain erişim geçmişini getirir (İsteğe bağlı IP filtreli)."""
+        self.cleanup_old_dns_logs() # Her okumada da eskiyi temizle
         with self.lock:
             if ip:
                 self.cursor.execute('SELECT * FROM dns_logs WHERE src_ip = ? ORDER BY timestamp DESC LIMIT ?', (ip, limit))

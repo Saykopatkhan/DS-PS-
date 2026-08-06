@@ -169,21 +169,19 @@
         <section class="traffic-row" style="margin-top: 20px;">
             <div class="traffic-panel" style="background-color: #112240; border-radius: 8px; border: 1px solid #233554; padding: 20px;">
                 <div class="panel-header" style="margin-bottom: 10px;">
-                    <h2><i class="fas fa-eye"></i> Genel Ağ Gözetleme (Tüm Cihazlar)</h2>
-                    <button class="btn btn-sm" onclick="document.getElementById('general-traffic-body').innerHTML=''">Temizle</button>
+                    <h2><i class="fas fa-eye"></i> Genel Ağ Gözetleme (Aktif Cihazlar)</h2>
+                    <button class="btn btn-sm" onclick="fetchRecordsForTrafficList()">Yenile</button>
                 </div>
                 <div style="height: 300px; overflow-y: auto; background-color: #0a192f; border-radius: 4px; border: 1px solid #1d2d50;">
-                    <table style="width:100%; border-collapse:collapse; color:#e2e8f0; font-family:var(--font-mono); font-size:13px;">
+                    <table style="width:100%; border-collapse:collapse; color:#e2e8f0; font-family:var(--font-mono); font-size:14px;">
                         <thead>
                             <tr style="border-bottom:1px solid #233554; text-align:left;">
-                                <th style="padding:10px; color:#64ffda;">Zaman</th>
-                                <th style="padding:10px; color:#64ffda;">Kaynak IP</th>
-                                <th style="padding:10px; color:#64ffda;">Domain / Hedef</th>
-                                <th style="padding:10px; color:#64ffda;">Tip</th>
+                                <th style="padding:10px; color:#64ffda;">Cihaz IP / MAC</th>
+                                <th style="padding:10px; color:#64ffda; text-align:right;">İşlem</th>
                             </tr>
                         </thead>
                         <tbody id="general-traffic-body">
-                            <!-- Traffic logs will be inserted here dynamically -->
+                            <tr><td colspan="2" style="text-align:center; padding:15px; color:#8892b0;">Taramayı başlatın veya cihazları bekleyin...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -229,7 +227,7 @@
                     <div class="panel-header">
                         <h2>🚫 Aktif Engellemeler</h2>
                     </div>
-                    <div class="ban-form">
+                    <div class="ban-form" style="display:none;">
                         <input type="text" id="ban-ip" class="input-field" placeholder="IP Adresi">
                         <input type="text" id="ban-mac" class="input-field" placeholder="MAC Adresi">
                         <input type="text" id="ban-reason" class="input-field" placeholder="Neden">
