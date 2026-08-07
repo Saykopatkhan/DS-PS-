@@ -50,11 +50,34 @@ class ARPDetector:
                 
             self.db.update_ip_mac(sender_ip, sender_mac)
 
+    def _get_local_macs(self):
+        """Sistemin kendi MAC adreslerini (Whitelist) döndürür."""
+        try:
+            from scapy.arch import get_if_list, get_if_hwaddr
+            macs = []
+            for iface in get_if_list():
+                try:
+                    mac = get_if_hwaddr(iface)
+                    if mac:
+                        macs.append(mac.lower())
+                except:
+                    pass
+            return macs
+        except Exception:
+            return []
+
     def _detect_spoofing(self, packet):
         """ARP Spoofing tespiti yapar."""
         sender_ip = packet[ARP].psrc
         sender_mac = packet[ARP].hwsrc
         
+        # -------------------------------------------------------------
+        # BEYAZ LİSTE (WHITELIST): Kendi IPS sistemimizin MAC'i mi?
+        # Blocker modülünün attığı izolasyon paketlerini saldırı sanma.
+        # -------------------------------------------------------------
+        if sender_mac.lower() in self._get_local_macs():
+            return
+            
         if sender_ip in self.ip_mac_table:
             if sender_mac not in self.ip_mac_table[sender_ip]:
                 known_macs = ', '.join(self.ip_mac_table[sender_ip])
@@ -68,6 +91,34 @@ class ARPDetector:
                 if self.blocker and self.auto_ban:
                     self.blocker.block_ip(sender_ip)
                     self.blocker.block_mac(sender_mac)
+                    
+                # -------------------------------------------------------------
+                # KULLANICI EKLENTİSİ: Anti-MITM Koruma (Healing Packets)
+                # Kurban cihazların ARP tablolarını düzeltmek için ağa doğru 
+                # MAC adresiyle düzeltme paketleri yollar.
+                # -------------------------------------------------------------
+                try:
+                    from scapy.all import sendp
+                    # Bilinen ilk MAC adresini doğru kabul ediyoruz (Real MAC)
+                    real_mac = list(self.ip_mac_table[sender_ip])[0]
+                    correct_arp = Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(
+                        op=2, 
+                        pdst="255.255.255.255", # Broadcast IP
+                        psrc=sender_ip, 
+                        hwsrc=real_mac
+                    )
+                    sendp(correct_arp, count=5, verbose=False)
+                    self.db.add_alert(
+                        alert_type='Anti-MITM Healing',
+                        src_ip='System', src_mac='N/A',
+                        dst_ip='Broadcast', dst_mac='ff:ff:ff:ff:ff:ff',
+                        description=f'{sender_ip} için onarıcı ARP (Healing) paketleri ağa yayınlandı.',
+                        severity='warning'
+                    )
+                except Exception as e:
+                    print(f"Anti-MITM Healing hatası: {e}")
+                # -------------------------------------------------------------
+                
                 self.ip_mac_table[sender_ip].add(sender_mac)
         else:
             self.ip_mac_table[sender_ip].add(sender_mac)

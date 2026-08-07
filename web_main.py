@@ -16,11 +16,8 @@ import sys
 from colorama import init, Fore, Style
 
 # Otomatik Aktif Arayüz Tespiti (Örn: wlan0, eth0)
-try:
-    from scapy.all import conf
-    default_iface = conf.route.route("0.0.0.0")[3]
-except Exception:
-    default_iface = 'eth0'
+# 'any' seçilerek hem localhost (lo) hem de dış ağ kartlarının aynı anda dinlenmesi sağlanır.
+default_iface = 'any'
 
 init(autoreset=True)
 

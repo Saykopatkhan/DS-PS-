@@ -3,12 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; font-src https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data: https://*.basemaps.cartocdn.com https://unpkg.com;">
     <title>DS IPS - Ağ Saldırı Tespit & Önleme Paneli</title>
     <meta name="description" content="DS IPS - Gerçek zamanlı ağ saldırı tespit ve önleme sistemi dashboard paneli">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/leaflet.css') }}" />
+    <script src="{{ url_for('static', filename='js/leaflet.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -51,10 +54,17 @@
                 </div>
             </div>
             <div class="stat-card">
-                <div class="stat-icon">🌐</div>
+                <div class="stat-icon">💻</div>
                 <div class="stat-info">
-                    <span class="stat-value" id="interface-name">eth0</span>
-                    <span class="stat-label">Arayüz</span>
+                    <span class="stat-value" id="cpu-usage">0%</span>
+                    <span class="stat-label">CPU Yükü</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">🧠</div>
+                <div class="stat-info">
+                    <span class="stat-value" id="ram-usage">0%</span>
+                    <span class="stat-label">RAM Kullanımı</span>
                 </div>
             </div>
             <div class="stat-card">
@@ -62,6 +72,25 @@
                 <div class="stat-info">
                     <span class="stat-value" id="uptime">00:00:00</span>
                     <span class="stat-label">Çalışma Süresi</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- SOC CHARTS AND MAP ROW -->
+        <section class="soc-row" style="margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div class="soc-panel" style="background-color: #112240; border-radius: 8px; border: 1px solid #233554; padding: 20px;">
+                <div class="panel-header" style="margin-bottom: 10px;">
+                    <h2>🌍 Canlı Siber Tehdit Haritası</h2>
+                </div>
+                <div id="world-map" style="width: 100%; height: 350px; background-color: #0a192f; border-radius: 4px; border: 1px solid #1d2d50;"></div>
+            </div>
+            
+            <div class="soc-panel" style="background-color: #112240; border-radius: 8px; border: 1px solid #233554; padding: 20px;">
+                <div class="panel-header" style="margin-bottom: 10px;">
+                    <h2>📊 Risk ve Alarm Grafiği</h2>
+                </div>
+                <div style="width: 100%; height: 350px; background-color: #0a192f; border-radius: 4px; border: 1px solid #1d2d50; padding: 10px; box-sizing: border-box;">
+                    <canvas id="alertChart"></canvas>
                 </div>
             </div>
         </section>
@@ -309,5 +338,250 @@
     <script src="{{ url_for('static', filename='vis-network.min.js') }}"></script>
     <script src="{{ url_for('static', filename='socket.io.min.js') }}"></script>
     <script src="{{ url_for('static', filename='app.js') }}?v=2.4"></script>
+    
+    <!-- PCAP Download Extension & SOC Dashboard Enhancements -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // ==================
+            // WORLD MAP (Leaflet)
+            // ==================
+            // HARİTA YERİNE CYBER RADAR (Offline Uyumlu)
+            // ==================
+            const mapEl = document.getElementById('world-map');
+            
+            // Radar CSS stillerini enjekte edelim
+            const radarStyle = document.createElement('style');
+            radarStyle.innerHTML = `
+                #world-map {
+                    position: relative;
+                    background-color: #031321;
+                    background-image: 
+                        linear-gradient(90deg, rgba(100, 255, 218, 0.1) 1px, transparent 1%),
+                        linear-gradient(rgba(100, 255, 218, 0.1) 1px, transparent 1%);
+                    background-size: 20px 20px;
+                    overflow: hidden;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                }
+                .radar-circle {
+                    position: absolute;
+                    border: 1px solid rgba(100, 255, 218, 0.3);
+                    border-radius: 50%;
+                }
+                .radar-sweep {
+                    position: absolute;
+                    width: 150px;
+                    height: 150px;
+                    background: conic-gradient(from 0deg, transparent 70%, rgba(100, 255, 218, 0.8) 100%);
+                    border-radius: 50%;
+                    animation: sweep 4s linear infinite;
+                }
+                @keyframes sweep {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            `;
+            document.head.appendChild(radarStyle);
+
+            // İçerik HTML'sini ekle
+            mapEl.innerHTML = `
+                <div class="radar-circle" style="width: 300px; height: 300px;"></div>
+                <div class="radar-circle" style="width: 200px; height: 200px;"></div>
+                <div class="radar-circle" style="width: 100px; height: 100px;"></div>
+                <div class="radar-sweep"></div>
+                <div style="position:absolute; bottom:10px; right:10px; color:#64ffda; font-family:monospace; font-size:10px;">
+                    RADAR AKTİF (LOCAL AĞ)
+                </div>
+            `;
+            
+            // map objesini dummy hale getiriyoruz ki aşağıdaki kodlar patlamasın
+            let map = {
+                hasLayer: () => false,
+                removeLayer: () => {}
+            };
+
+            // ==================
+            // CHART.JS (Alerts)
+            // ==================
+            try {
+                const ctx = document.getElementById('alertChart').getContext('2d');
+                alertChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Kritik', 'Yüksek', 'Orta', 'Düşük/Bilgi'],
+                        datasets: [{
+                            data: [0, 0, 0, 0],
+                            backgroundColor: ['#ff4444', '#ffaa00', '#64ffda', '#8892b0'],
+                            borderColor: '#0a192f',
+                            borderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'right', labels: { color: '#e2e8f0' } },
+                            tooltip: {
+                                callbacks: {
+                                    afterLabel: function(context) {
+                                        let details = context.chart.data.details;
+                                        if (details && details[context.dataIndex]) {
+                                            let lines = [];
+                                            let total = context.parsed;
+                                            details[context.dataIndex].forEach(item => {
+                                                let pct = total > 0 ? Math.round((item.count / total) * 100) : 0;
+                                                lines.push('  • ' + item.name + ': ' + item.count + ' (%' + pct + ')');
+                                            });
+                                            return lines;
+                                        }
+                                        return [];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            } catch (e) {
+                console.error("Chart.js grafiği yüklenemedi: ", e);
+            }
+
+            // ==================
+            // KENDİ SOCKET.IO BAĞLANTIMIZ (Dashboard İçin)
+            // ==================
+            // app.js minified olduğu için doğrudan kendi socket bağlantımızı kurup verileri alıyoruz.
+            fetch('/api/ws_token')
+                .then(r => r.json())
+                .then(data => {
+                    const dashboardSocket = io('/', { auth: { token: data.token } });
+                    
+                    dashboardSocket.on('stats_update', (stats) => {
+                        try {
+                            if (stats.cpu_usage !== undefined) {
+                                const cpuEl = document.getElementById('cpu-usage');
+                                const ramEl = document.getElementById('ram-usage');
+                                if (cpuEl) {
+                                    cpuEl.innerText = stats.cpu_usage + '%';
+                                    cpuEl.style.color = stats.cpu_usage > 80 ? '#ff4444' : '#64ffda';
+                                }
+                                if (ramEl) {
+                                    ramEl.innerText = stats.ram_usage + '%';
+                                    ramEl.style.color = stats.ram_usage > 80 ? '#ff4444' : '#64ffda';
+                                }
+                            }
+                            
+                            if (stats.uptime !== undefined) {
+                                const uptimeEl = document.getElementById('uptime');
+                                if (uptimeEl) {
+                                    const h = Math.floor(stats.uptime / 3600).toString().padStart(2, '0');
+                                    const m = Math.floor((stats.uptime % 3600) / 60).toString().padStart(2, '0');
+                                    const s = (stats.uptime % 60).toString().padStart(2, '0');
+                                    uptimeEl.innerText = `${h}:${m}:${s}`;
+                                }
+                            }
+                            
+                            if (stats.alert_counts && Array.isArray(stats.alert_counts) && alertChart) {
+                                let crit = 0, high = 0, med = 0, low = 0;
+                                let details = [[], [], [], []]; // 0: crit, 1: high, 2: med, 3: low
+                                
+                                stats.alert_counts.forEach(item => {
+                                    let sev = (item.severity || '').toLowerCase();
+                                    if (sev === 'critical') { crit += item.count; details[0].push({name: item.alert_type, count: item.count}); }
+                                    else if (sev === 'high' || sev === 'warning') { high += item.count; details[1].push({name: item.alert_type, count: item.count}); }
+                                    else if (sev === 'medium') { med += item.count; details[2].push({name: item.alert_type, count: item.count}); }
+                                    else { low += item.count; details[3].push({name: item.alert_type, count: item.count}); }
+                                });
+                                
+                                alertChart.data.labels = ['Kritik (Kırmızı)', 'Yüksek (Sarı)', 'Orta (Cyan)', 'Düşük/Bilgi (Gri)'];
+                                alertChart.data.details = details;
+                                alertChart.data.datasets[0].data = [crit, high, med, low];
+                                alertChart.data.datasets[0].backgroundColor = ['#ff4444', '#ffaa00', '#64ffda', '#8892b0'];
+                                alertChart.update();
+                            }
+                        } catch(e) {
+                            console.error("Dashboard güncelleme hatası: ", e);
+                        }
+                    });
+
+                    dashboardSocket.on('new_alert', (data) => {
+                        try {
+                            if (data.pcap_file) {
+                                setTimeout(() => {
+                                    const alertsList = document.getElementById('alerts-list');
+                                    if (alertsList && alertsList.firstChild) {
+                                        const alertDiv = alertsList.firstChild;
+                                        if (!alertDiv.querySelector('.pcap-btn')) {
+                                            const pcapBtn = document.createElement('a');
+                                            pcapBtn.className = 'btn btn-sm btn-primary pcap-btn';
+                                            pcapBtn.style.marginTop = '10px';
+                                            pcapBtn.style.display = 'inline-block';
+                                            pcapBtn.style.backgroundColor = '#233554';
+                                            pcapBtn.href = '/static/pcaps/' + data.pcap_file;
+                                            pcapBtn.download = data.pcap_file;
+                                            pcapBtn.innerHTML = '📥 PCAP İndir (Kanıt)';
+                                            alertDiv.appendChild(pcapBtn);
+                                        }
+                                    }
+                                }, 100);
+                            }
+                            // ==========================================
+                            // RADAR BLIP OLUŞTURMA (Leaflet yerine)
+                            // ==========================================
+                            const radarMap = document.getElementById('world-map');
+                            if (radarMap) {
+                                // Etiketi belirle (Rusya vs)
+                                let label = data.source_ip;
+                                if (data.description && data.description.includes('Russia')) {
+                                    label = '🚨 RUSSIA (' + data.destination_ip + ')';
+                                } else if (data.country) {
+                                    label = data.country + ' (' + data.source_ip + ')';
+                                }
+
+                                // Radarın merkezinden rastgele bir açı ve uzaklık hesapla
+                                const angle = Math.random() * Math.PI * 2;
+                                const radius = 30 + Math.random() * 100; // Merkezden uzaklık (30px - 130px)
+                                const x = Math.cos(angle) * radius;
+                                const y = Math.sin(angle) * radius;
+
+                                // Nokta (Blip)
+                                const blip = document.createElement('div');
+                                blip.style.position = 'absolute';
+                                blip.style.width = '12px';
+                                blip.style.height = '12px';
+                                blip.style.backgroundColor = data.severity === 'critical' ? '#ff4444' : '#ffaa00';
+                                blip.style.borderRadius = '50%';
+                                blip.style.boxShadow = '0 0 15px ' + blip.style.backgroundColor;
+                                blip.style.transform = `translate(${x}px, ${y}px)`;
+                                blip.style.zIndex = '10';
+                                
+                                // Metin Etiketi
+                                const blipLabel = document.createElement('div');
+                                blipLabel.innerText = label;
+                                blipLabel.style.position = 'absolute';
+                                blipLabel.style.color = blip.style.backgroundColor;
+                                blipLabel.style.fontSize = '11px';
+                                blipLabel.style.fontWeight = 'bold';
+                                blipLabel.style.transform = `translate(${x + 15}px, ${y - 6}px)`;
+                                blipLabel.style.whiteSpace = 'nowrap';
+                                blipLabel.style.textShadow = '0px 0px 5px black, 0px 0px 8px ' + blip.style.backgroundColor;
+                                blipLabel.style.zIndex = '10';
+
+                                radarMap.appendChild(blip);
+                                radarMap.appendChild(blipLabel);
+
+                                // Blipi 20 saniye sonra sil (Radar ekranından kaybolsun)
+                                setTimeout(() => {
+                                    if (radarMap.contains(blip)) radarMap.removeChild(blip);
+                                    if (radarMap.contains(blipLabel)) radarMap.removeChild(blipLabel);
+                                }, 20000);
+                            }
+                        } catch(e) {
+                            console.error("Harita/PCAP güncelleme hatası: ", e);
+                        }
+                    });
+                })
+                .catch(err => console.error("Socket token alınamadı:", err));
+        });
+    </script>
 </body>
 </html>

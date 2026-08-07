@@ -15,6 +15,7 @@ import time
 import threading
 import csv
 import io
+import psutil
 from datetime import datetime
 from flask import Flask, render_template, jsonify, request, Response
 from flask_socketio import SocketIO, emit
@@ -32,6 +33,8 @@ from modules.dhcp_detector import DHCPDetector
 from modules.honeypot import Honeypot
 from modules.threat_intel import ThreatIntelDetector
 from modules.anti_evasion import AntiEvasionDetector
+from modules.waf_detector import WAFDetector
+from modules.dpi_detector import DPIDetector
 from responder.blocker import Blocker
 
 
@@ -80,6 +83,10 @@ class IPSWebApp:
         self.ssh_honeypot = SSHHoneypot(self.db, self.blocker, auto_ban=False, port=22)
         self.threat_intel = ThreatIntelDetector(self.db, self.blocker, auto_ban=False)
         self.anti_evasion = AntiEvasionDetector(self.db, self.blocker, auto_ban=False)
+        self.waf_detector = WAFDetector(self.db, self.blocker, auto_ban=False)
+        self.dpi_detector = DPIDetector(self.db, self.blocker, auto_ban=False)
+        from modules.c2_detector import C2BeaconingDetector
+        self.c2_detector = C2BeaconingDetector(self.db, self.blocker, auto_ban=False)
         from modules.decoy_traffic import DecoyTrafficGenerator
         self.decoy_generator = DecoyTrafficGenerator()
         self.wifi_detector = None
@@ -94,6 +101,9 @@ class IPSWebApp:
         self.sniffer.register_callback(self.dhcp_detector.analyze)
         self.sniffer.register_callback(self.threat_intel.analyze)
         self.sniffer.register_callback(self.anti_evasion.analyze)
+        self.sniffer.register_callback(self.waf_detector.analyze)
+        self.sniffer.register_callback(self.dpi_detector.analyze)
+        self.sniffer.register_callback(self.c2_detector.analyze)
         if self.wifi_detector:
             self.sniffer.register_callback(self.wifi_detector.analyze)
             
@@ -394,13 +404,26 @@ class IPSWebApp:
 
         @self.app.route('/api/export/alerts')
         def export_alerts():
-            alerts = self.db.get_alerts(limit=10000)
-            si = io.StringIO()
-            cw = csv.writer(si)
-            cw.writerow(['ID', 'Zaman', 'Tip', 'Kaynak IP', 'Kaynak MAC', 'Hedef IP', 'Açıklama', 'Seviye'])
-            for a in alerts:
-                cw.writerow([sanitize_csv(x) for x in [a['id'], a['timestamp'], a['alert_type'], a['source_ip'], a['source_mac'], a['destination_ip'], a['description'], a['severity']]])
-            return Response(si.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment;filename=alerts.csv'})
+            alerts = self.db.get_alerts(limit=1000)
+            from web.report_gen import generate_pdf_report
+            import tempfile
+            
+            # Gecici bir dosya olustur
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix='.pdf')
+            os.close(tmp_fd)
+            
+            try:
+                generate_pdf_report(alerts, tmp_path)
+                with open(tmp_path, 'rb') as f:
+                    pdf_data = f.read()
+            finally:
+                os.remove(tmp_path)
+                
+            return Response(
+                pdf_data,
+                mimetype='application/pdf',
+                headers={'Content-Disposition': f'attachment;filename=ds_ips_report_{datetime.now().strftime("%Y%m%d")}.pdf'}
+            )
 
         @self.app.route('/api/export/devices')
         def export_devices():
@@ -439,12 +462,21 @@ class IPSWebApp:
         if self.start_time and self.sniffer_running:
             uptime = int(time.time() - self.start_time)
 
+        try:
+            cpu_usage = psutil.cpu_percent(interval=0)
+            ram_usage = psutil.virtual_memory().percent
+        except Exception:
+            cpu_usage = 0
+            ram_usage = 0
+
         return {
             'sniffer_running': self.sniffer_running,
             'mode': self.mode.upper(),
             'interface': self.interface,
             'wifi_enabled': self.wifi_enabled,
             'uptime': uptime,
+            'cpu_usage': cpu_usage,
+            'ram_usage': ram_usage,
             'total_alerts': self.db.get_total_alert_count(),
             'active_bans': self.db.get_active_ban_count(),
             'alert_counts': self.db.get_alert_counts(),
@@ -464,11 +496,19 @@ class IPSWebApp:
                 pass
 
     def _handle_alert(self, alert_data):
-        if alert_data.get('severity', '').lower() == 'critical':
-            src_ip = alert_data.get('source_ip')
-            if src_ip and src_ip != 'N/A':
-                self._capture_pcap(src_ip)
+        """Database'den gelen alarmları WebSocket üzerinden iletir ve PCAP kaydeder."""
+        if alert_data.get('severity', '').lower() == 'critical' and self.sniffer_running:
+            pcap_filename = f"alert_{alert_data['id']}.pcap"
+            pcap_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "pcaps")
+            os.makedirs(pcap_dir, exist_ok=True)
+            pcap_path = os.path.join(pcap_dir, pcap_filename)
+            
+            if self.sniffer.dump_pcap(pcap_path):
+                alert_data['pcap_file'] = pcap_filename
+                self.db.update_alert_pcap(alert_data['id'], pcap_filename)
                 
+        self.socketio.emit('new_alert', alert_data, namespace='/')
+        
         # Bildirim gönder
         title = f"DS IPS Alarm: {alert_data['alert_type']}"
         msg = alert_data['description']

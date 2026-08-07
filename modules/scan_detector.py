@@ -30,6 +30,7 @@ class ScanDetector:
         self.scan_threshold = 15
         self.time_window = 5.0
         self.last_cleanup = time.time()
+        self.last_flood_alert = defaultdict(float)
 
     def analyze(self, packet):
         """Paketi analiz ederek port tarama tespiti yapar."""
@@ -79,16 +80,18 @@ class ScanDetector:
         recent_packets = [t for t in self.connection_timestamps[src_ip] if current_time - t < 1.0]
         self.connection_timestamps[src_ip] = recent_packets
         
-        if len(recent_packets) > 500: # Saniyede 500 paket DoS kabul edilir
-            self.db.add_alert(
-                alert_type='SYN/UDP Flood (DoS)',
-                src_ip=src_ip, src_mac='N/A',
-                dst_ip='N/A', dst_mac='N/A',
-                description=f'Kaynak {src_ip} - Saniyede {len(recent_packets)} paket (Flood Saldırısı!)',
-                severity='critical'
-            )
-            if self.blocker and self.auto_ban:
-                self.blocker.block_ip(src_ip)
+        if len(recent_packets) > 2000: # Saniyede 2000 paket DoS kabul edilir
+            if current_time - self.last_flood_alert[src_ip] > 5.0: # Her 5 saniyede bir alarm ver (Spam engelleme)
+                self.db.add_alert(
+                    alert_type='SYN/UDP Flood (DoS)',
+                    src_ip=src_ip, src_mac='N/A',
+                    dst_ip='N/A', dst_mac='N/A',
+                    description=f'Kaynak {src_ip} - Saniyede {len(recent_packets)} paket (Flood Saldırısı!)',
+                    severity='critical'
+                )
+                self.last_flood_alert[src_ip] = current_time
+                if self.blocker and self.auto_ban:
+                    self.blocker.block_ip(src_ip)
 
     def _check_syn_scan(self, src_ip):
         """SYN Scan tespiti."""

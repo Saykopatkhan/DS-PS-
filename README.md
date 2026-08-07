@@ -1,7 +1,7 @@
 <h1 align="center">🛡️🇹🇷 DS-IPS (Intrusion Prevention System) - Premium SOC Edition</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-2.6-00e5ff.svg?style=for-the-badge&logo=appveyor" alt="Version">
+  <img src="https://img.shields.io/badge/Version-3.0-00e5ff.svg?style=for-the-badge&logo=appveyor" alt="Version">
   <img src="https://img.shields.io/badge/Python-3.x-blue.svg?style=for-the-badge&logo=python" alt="Python">
   <img src="https://img.shields.io/badge/License-Proprietary-red.svg?style=for-the-badge&logo=law" alt="License">
   <img src="https://img.shields.io/badge/Security-Military_Grade-success.svg?style=for-the-badge&logo=security" alt="Security">
@@ -22,6 +22,13 @@ Proje, yalnızca ağ paketlerini yakalamakla kalmaz, aynı zamanda sistem yönet
 ---
 
 ## 🚀 Neler Yapabilir? (Temel Özellikler)
+
+### 🌟 Yeni Eklenen v3.0 Özellikleri (Premium Güncelleme)
+- **Canlı Siber Radar (Cyber Radar):** Ağdaki kritik tehditleri (Örn: Rusya tabanlı C2 bağlantıları) radar ekranında görsel "Blip" (hedef) olarak yansıtan askeri tarz animasyon.
+- **Derin Paket İnceleme (DPI) ile SNI Sniffing:** DNS önbelleğini (Cache) ve Güvenli DNS'i (DoH) aşarak, internete çıkan şifreli (HTTPS) trafiğin içindeki alan adlarını (SNI) cımbızla çeker ve Canlı Gözetleme ekranına anında yansıtır.
+- **Anti-MITM Healing (Aktif İyileştirme):** Ağda bir ARP zehirlenmesi tespit edildiğinde saldırganı engellemekle kalmaz, kurban cihazların bağlantısı kopmasın diye ağa "Onarıcı (Healing)" Broadcast ARP paketleri fırlatır. Kendi koruma modülleriyle (Blocker) çakışmaması için Akıllı Beyaz Liste (Whitelist) kullanır.
+- **Akıllı Ses/Alarm Yönetimi (Debounce):** Yoğun ağ saldırılarında (Örn: Flood) üst üste binen alarm seslerini engelleyen 4 saniyelik Akıllı Cooldown algoritması.
+- **Gelişmiş Risk Grafiği:** Alarmları sadece "Risk Seviyesine" (Kritik🔴, Yüksek🟡, Orta🔵, Düşük🔘) göre dinamik 4 dilimde gruplayıp, üzerine gelindiğinde detaylı yüzdelik kırılımları gösteren profesyonel Tooltip entegrasyonu.
 
 ### 1. 🔍 Gelişmiş Saldırı Tespiti (IDS - Intrusion Detection)
 - **ARP Spoofing / Zehirlenmesi:** Ağdaki cihazların kimliğine bürünerek Ortadaki Adam (MitM) saldırısı yapmaya çalışan cihazları anında yakalar.

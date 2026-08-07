@@ -73,35 +73,65 @@ class ThreatIntelDetector:
             if dst_ip not in self.geo_cache:
                 self.geo_cache[dst_ip] = 'pending'
                 threading.Thread(target=self._check_geo_ip, args=(packet, src_ip, dst_ip), daemon=True).start()
-            elif self.geo_cache[dst_ip] in self.bad_countries:
+            elif isinstance(self.geo_cache[dst_ip], dict) and self.geo_cache[dst_ip].get('country_code') in self.bad_countries:
                 self._detect_bad_geo(packet, src_ip, dst_ip, self.geo_cache[dst_ip])
 
     def _check_geo_ip(self, packet, src_ip, dst_ip):
         try:
-            url = f"https://ipapi.co/{dst_ip}/json/"
+            url = f"http://ip-api.com/json/{dst_ip}"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=5) as response:
                 data = json.loads(response.read().decode('utf-8'))
-                cc = data.get('country_code', '')
-                self.geo_cache[dst_ip] = cc
                 
-                if cc in self.bad_countries:
-                    self._detect_bad_geo(packet, src_ip, dst_ip, cc)
+                if data.get('status') == 'success':
+                    cc = data.get('countryCode', '')
+                    geo_info = {
+                        'country_code': cc,
+                        'country': data.get('country', 'Bilinmiyor'),
+                        'lat': data.get('lat'),
+                        'lon': data.get('lon'),
+                        'isp': data.get('isp', ''),
+                        'asn': data.get('as', '')
+                    }
+                    self.geo_cache[dst_ip] = geo_info
+                    
+                    if cc in self.bad_countries:
+                        self._detect_bad_geo(packet, src_ip, dst_ip, geo_info)
+                else:
+                    self.geo_cache[dst_ip] = 'unknown'
         except Exception:
             self.geo_cache[dst_ip] = 'unknown'
 
-    def _detect_bad_geo(self, packet, src_ip, dst_ip, country_code):
+    def _detect_bad_geo(self, packet, src_ip, dst_ip, geo_info):
         src_mac = packet.src if hasattr(packet, 'src') else 'N/A'
+        country = geo_info.get('country', 'Bilinmiyor')
+        lat = geo_info.get('lat')
+        lon = geo_info.get('lon')
+        
+        from datetime import datetime
+        now = datetime.now()
+        is_night = (now.hour >= 1 and now.hour <= 5)
+        
+        alert_type = 'Coğrafi Kalkan (Geo-IP) İhlali'
+        desc = f"Cihaz şüpheli bir ülkeye ({country}) veri sızdırmaya çalışıyor: {dst_ip}. (Arka Kapı / Backdoor Tespiti)"
+        
+        # UEBA (User Entity Behavior Analytics)
+        if is_night:
+            alert_type = 'UEBA Anomaly (Olağandışı Saat)'
+            desc = f"Olağandışı saatte (01:00-05:00) şüpheli {country} bağlantısı. Olası Veri Sızdırma (Exfiltration)!"
+            
         self.db.add_alert(
-            alert_type='Coğrafi Kalkan (Geo-IP) İhlali',
+            alert_type=alert_type,
             src_ip=src_ip, src_mac=src_mac,
             dst_ip=dst_ip, dst_mac='N/A',
-            description=f"Cihaz şüpheli bir ülkeye ({country_code}) veri sızdırmaya çalışıyor: {dst_ip}. (Arka Kapı / Backdoor Tespiti)",
-            severity='critical'
+            description=desc,
+            severity='critical',
+            lat=lat, lon=lon, country=country
         )
-        SoundAlert.alert_attack(f"Geo-IP İhlali: {country_code}")
-        # Geo-IP cache'ten de temizleyelim ki bir daha uyarabilsin (veya temizlemeyip ban'a bırakabiliriz, temizlersek spama düşer)
-        # Sadece countryCode'u tutuyoruz, spamı engellemek için uyarı tipine cache ekleyebiliriz.
+        from utils.sound import SoundAlert
+        SoundAlert.alert_attack(f"Geo-IP İhlali: {country}")
+        if self.blocker and self.auto_ban:
+            self.blocker.block_ip(src_ip)
 
     def _detect_bad_connection(self, packet, src_ip, dst_ip):
         src_mac = packet.src if hasattr(packet, 'src') else 'N/A'

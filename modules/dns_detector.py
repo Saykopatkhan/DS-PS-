@@ -59,6 +59,61 @@ class DNSDetector:
                 
                 self._check_flood(src_ip)
                 
+        # -------------------------------------------------------------
+        # YENİ EKLENTİ: HTTP Host Header ve TLS SNI (HTTPS) Tespiti
+        # DNS Önbelleğini veya Güvenli DNS'i (DoH) aşmak için doğrudan paketten okur.
+        # -------------------------------------------------------------
+        from scapy.all import TCP, Raw
+        if packet.haslayer(IP) and packet.haslayer(TCP) and packet.haslayer(Raw):
+            if packet[TCP].dport == 80 or packet[TCP].dport == 443:
+                src_ip = packet[IP].src
+                src_mac = packet.getlayer(Ether).src if packet.haslayer(Ether) else 'N/A'
+                try:
+                    payload = packet[Raw].load
+                    # HTTP Host Header kontrolü
+                    if packet[TCP].dport == 80:
+                        if payload.startswith(b"GET ") or payload.startswith(b"POST "):
+                            lines = payload.split(b"\r\n")
+                            for line in lines:
+                                if line.lower().startswith(b"host:"):
+                                    domain = line.split(b":", 1)[1].strip().decode('utf-8', errors='ignore')
+                                    if domain:
+                                        self.db.add_dns_log(src_ip, src_mac, domain, record_type='HTTP')
+                                    return
+                    # TLS SNI (HTTPS) kontrolü
+                    elif packet[TCP].dport == 443:
+                        # Client Hello paketi mi? (TLS Handshake 0x16, Type 0x01)
+                        if len(payload) > 40 and payload[0] == 0x16 and payload[5] == 0x01:
+                            import re
+                            # Çok hızlı ve kaba bir TLS SNI ayıklayıcı (Regex heuristic)
+                            strings = re.findall(rb'[a-z0-9.-]+\.[a-z]{2,6}', payload.lower())
+                            for s in strings:
+                                s_str = s.decode('utf-8', errors='ignore')
+                                # Çöp verileri engellemek için sadece bilindik uzantıları kabul et
+                                if s_str.endswith(('.com', '.net', '.org', '.tr', '.io', '.co', '.dev', '.info', '.gov', '.edu')):
+                                    self.db.add_dns_log(src_ip, src_mac, s_str, record_type='HTTPS')
+                                    return
+                except Exception:
+                    pass
+        # -------------------------------------------------------------                
+        # LLMNR Poisoning (Responder) Tespiti
+        from scapy.all import UDP
+        if packet.haslayer(UDP) and packet.haslayer(IP):
+            if packet[UDP].sport == 5355 or packet[UDP].dport == 5355:
+                src_ip = packet[IP].src
+                # Eğer LLMNR cevabı ise (qr=1) genelde zehirlemedir
+                if packet.haslayer(DNS) and packet[DNS].qr == 1:
+                    self.db.add_alert(
+                        alert_type='LLMNR Poisoning / MitM',
+                        src_ip=src_ip, src_mac='N/A',
+                        dst_ip=packet[IP].dst, dst_mac='N/A',
+                        description=f'Kaynak {src_ip} sahte LLMNR (Responder) cevabı gönderiyor!',
+                        severity='critical'
+                    )
+                    SoundAlert.alert_attack("LLMNR Zehirlenmesi")
+                    if self.blocker and self.auto_ban:
+                        self.blocker.block_ip(src_ip)
+                
         self._reset_window()
 
     def _trigger_sinkhole(self, src_ip, domain, packet):

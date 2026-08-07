@@ -93,9 +93,15 @@ class Database:
                     destination_mac TEXT,
                     description TEXT,
                     severity TEXT DEFAULT 'medium',
-                    resolved INTEGER DEFAULT 0
+                    resolved INTEGER DEFAULT 0,
+                    pcap_file TEXT DEFAULT NULL
                 )
             ''')
+            
+            try:
+                self.cursor.execute("ALTER TABLE alerts ADD COLUMN pcap_file TEXT DEFAULT NULL")
+            except sqlite3.OperationalError:
+                pass
 
             self.cursor.execute('''
                 CREATE TABLE IF NOT EXISTS banned_hosts (
@@ -166,15 +172,37 @@ class Database:
             self.cursor.execute('SELECT mac_address FROM ip_mac_records WHERE ip_address = ?', (ip,))
             return [row['mac_address'] for row in self.cursor.fetchall()]
 
-    def add_alert(self, alert_type, src_ip, src_mac, dst_ip, dst_mac, description, severity):
+    def _get_mitre_mapping(self, alert_type):
+        """Alarm türüne göre MITRE ATT&CK Taktik/Tekniğini döndürür."""
+        alert_lower = alert_type.lower()
+        if 'flood' in alert_lower or 'dos' in alert_lower:
+            return 'T1498 (Network Denial of Service)'
+        if 'dpi' in alert_lower or 'reverse shell' in alert_lower or 'payload' in alert_lower:
+            return 'T1059 (Command and Scripting Interpreter)'
+        if 'zehirlenme' in alert_lower or 'arp' in alert_lower or 'dns' in alert_lower or 'dhcp' in alert_lower or 'llmnr' in alert_lower:
+            return 'T1557 (Adversary-in-the-Middle)'
+        if 'beaconing' in alert_lower or 'c2' in alert_lower:
+            return 'T1071 (Application Layer Protocol - C2)'
+        if 'geo-ip' in alert_lower:
+            return 'T1090 (Proxy) / Backdoor'
+        if 'tarama' in alert_lower or 'scan' in alert_lower:
+            return 'T1046 (Network Service Discovery)'
+        if 'honeypot' in alert_lower or 'brute' in alert_lower:
+            return 'T1110 (Brute Force)'
+        return 'T1078 (Valid Accounts / Unknown)'
+
+    def add_alert(self, alert_type, src_ip, src_mac, dst_ip, dst_mac, description, severity, pcap_file=None, **kwargs):
         """Yeni bir alarm ekler, konsola yazdırır ve WebSocket üzerinden gönderir."""
+        mitre_tactic = self._get_mitre_mapping(alert_type)
+        description = f"[{mitre_tactic}] {description}"
+        
         with self.lock:
             self.cursor.execute('''
                 INSERT INTO alerts (
                     alert_type, source_ip, source_mac, 
-                    destination_ip, destination_mac, description, severity
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (alert_type, src_ip, src_mac, dst_ip, dst_mac, description, severity))
+                    destination_ip, destination_mac, description, severity, pcap_file
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (alert_type, src_ip, src_mac, dst_ip, dst_mac, description, severity, pcap_file))
             
             # Tehdit skorunu artır
             if src_ip and src_ip != 'N/A':
@@ -211,8 +239,10 @@ class Database:
             'destination_ip': dst_ip,
             'destination_mac': dst_mac,
             'description': description,
-            'severity': severity
+            'severity': severity,
+            'pcap_file': pcap_file
         }
+        alert_data.update(kwargs)
         
         if self.socketio:
             try:
@@ -226,6 +256,12 @@ class Database:
             except Exception:
                 pass
 
+    def update_alert_pcap(self, alert_id, pcap_file):
+        """Alarm tablosundaki bir alarmın pcap_file sütununu günceller."""
+        with self.lock:
+            self.cursor.execute('UPDATE alerts SET pcap_file = ? WHERE id = ?', (pcap_file, alert_id))
+            self.conn.commit()
+
     def get_alerts(self, limit=50):
         """En son alarmları getirir."""
         with self.lock:
@@ -233,10 +269,10 @@ class Database:
             return [dict(row) for row in self.cursor.fetchall()]
 
     def get_alert_counts(self):
-        """Alarm türlerine göre sayıları döner."""
+        """Alarm türlerine ve severity'ye göre detaylı sayıları döner."""
         with self.lock:
-            self.cursor.execute('SELECT alert_type, COUNT(*) as count FROM alerts GROUP BY alert_type')
-            return {row['alert_type']: row['count'] for row in self.cursor.fetchall()}
+            self.cursor.execute('SELECT alert_type, severity, COUNT(*) as count FROM alerts GROUP BY alert_type, severity')
+            return [{'alert_type': row['alert_type'], 'severity': row['severity'].lower() if row['severity'] else 'info', 'count': row['count']} for row in self.cursor.fetchall()]
 
     def get_total_alert_count(self):
         """Toplam alarm sayısını döner."""

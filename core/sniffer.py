@@ -7,7 +7,8 @@
 
 import threading
 import logging
-from scapy.all import sniff, conf
+from collections import deque
+from scapy.all import sniff, conf, wrpcap
 
 class PacketSniffer:
     """
@@ -27,6 +28,7 @@ class PacketSniffer:
         self.callbacks = []
         self.running = False
         self.sniff_thread = None
+        self.pcap_buffer = deque(maxlen=1000)
 
     def register_callback(self, callback):
         """
@@ -44,6 +46,8 @@ class PacketSniffer:
         Args:
             packet (scapy.packet.Packet): Yakalanan paket.
         """
+        self.pcap_buffer.append(packet)
+        
         for callback in self.callbacks:
             try:
                 callback(packet)
@@ -64,7 +68,7 @@ class PacketSniffer:
             sniff(
                 store=0,
                 prn=self._packet_handler,
-                iface=self.interface,
+                iface=None if self.interface == 'any' else self.interface,
                 filter=self.filter_str,
                 stop_filter=lambda x: not self.running
             )
@@ -81,3 +85,15 @@ class PacketSniffer:
         self.running = False
         if self.sniff_thread and self.sniff_thread.is_alive():
             self.sniff_thread.join(timeout=2.0)
+
+    def dump_pcap(self, filename):
+        """
+        Mevcut PCAP hafızasını (Ring Buffer) diske yazar.
+        """
+        try:
+            wrpcap(filename, list(self.pcap_buffer))
+            logging.info(f"PCAP başarıyla kaydedildi: {filename}")
+            return True
+        except Exception as e:
+            logging.error(f"PCAP kaydedilirken hata: {e}")
+            return False
