@@ -64,6 +64,18 @@ Proje, yalnızca ağ paketlerini yakalamakla kalmaz, aynı zamanda sistem yönet
 
 ---
 
+## 🚀 Gelecek Planları (Future Works - v4.0 Vizyonu)
+
+DS-IPS, sürekli gelişen bir siber savunma kalkanı olarak tasarlanmıştır. Projenin gelecek sürümlerinde (v4.0) şu kurumsal SOC seviyesi özelliklerin eklenmesi planlanmaktadır:
+
+1. **🧠 Yapay Zeka (AI) ve Makine Öğrenimi (ML):** Sistemin sadece "kurallara" (Rule-based) göre değil, ağdaki kullanıcıların normal davranış modellerini öğrenerek (UEBA) hiç bilinmeyen (Zero-Day) anormallikleri saptaması.
+2. **🚧 Karantina Ağı (VLAN İzolasyonu):** Sadece ARP/iptables ile değil, kurumsal Switch'lerle (Cisco, Aruba vb.) 802.1x veya SNMP üzerinden haberleşip saldırganın fiziksel ağ kablosunu Karantina VLAN'ına atma yeteneği.
+3. **🕷️ Otonom Zafiyet Taraması:** Ağa katılan her yeni cihazı (Misafir Telefonu, Akıllı TV) otomatik ve sessizce tarayıp, sistem yöneticisine cihazdaki potansiyel açıkları (Açık SSH, Telnet) raporlaması.
+4. **🌍 Merkezi Bulut SIEM (ELK Stack):** Sistemi dağıtık (Distributed) sensörler halinde şirket şubelerine kurup, tüm saldırı verilerini ElasticSearch & Kibana üzerinde toplayan merkezi bir mimariye geçiş.
+5. **🔓 SSL/TLS Decryption (Tam Şifre Çözme):** Sadece SNI (Domain) bilgilerini okumakla kalmayıp, uç noktalara (Endpoint) kurulacak bir Root sertifikasıyla HTTPS trafiğinin içeriğini çözüp derin inceleme yapılması.
+
+---
+
 ## 🛠️ Kurulum ve Çalıştırma
 
 ### Gereksinimler
