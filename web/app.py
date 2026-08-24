@@ -24,7 +24,7 @@ from flask_socketio import SocketIO, emit
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.database import Database
-from core.sniffer import PacketSniffer
+from core.fast_sniffer import FastSniffer
 from modules.arp_detector import ARPDetector
 from modules.scan_detector import ScanDetector
 from modules.wifi_detector import WiFiDetector
@@ -93,25 +93,8 @@ class IPSWebApp:
         if self.wifi_enabled:
             self.wifi_detector = WiFiDetector(self.db, self.blocker, auto_ban=False)
 
-        # Sniffer ve Scanner
-        self.sniffer = PacketSniffer(interface=self.interface)
-        self.sniffer.register_callback(self.arp_detector.analyze)
-        self.sniffer.register_callback(self.scan_detector.analyze)
-        self.sniffer.register_callback(self.dns_detector.analyze)
-        self.sniffer.register_callback(self.dhcp_detector.analyze)
-        self.sniffer.register_callback(self.threat_intel.analyze)
-        self.sniffer.register_callback(self.anti_evasion.analyze)
-        self.sniffer.register_callback(self.waf_detector.analyze)
-        self.sniffer.register_callback(self.dpi_detector.analyze)
-        self.sniffer.register_callback(self.c2_detector.analyze)
-        if self.wifi_detector:
-            self.sniffer.register_callback(self.wifi_detector.analyze)
-            
-        from core.scanner import NetworkScanner
-        self.scanner = NetworkScanner(self.db, interface=self.interface)
-
-        self.sniffer_running = False
-        self.start_time = None
+        # Sniffer ve Scanner (Artık web_main.py yönetecek, burada referansları kaldırabiliriz)
+        self.sniffer = None
 
         self.failed_attempts = {}
         self.failed_attempts_lock = threading.Lock()
@@ -293,43 +276,14 @@ class IPSWebApp:
             action = data.get('action')
 
             if action == 'start':
-                if not self.sniffer_running:
-                    new_interface = data.get('interface', self.interface)
-                    if new_interface != self.interface:
-                        self.interface = new_interface
-                        self.sniffer = PacketSniffer(interface=self.interface)
-                        self.sniffer.register_callback(self.arp_detector.analyze)
-                        self.sniffer.register_callback(self.scan_detector.analyze)
-                        self.sniffer.register_callback(self.dns_detector.analyze)
-                        self.sniffer.register_callback(self.dhcp_detector.analyze)
-                        self.sniffer.register_callback(self.threat_intel.analyze)
-                        self.sniffer.register_callback(self.anti_evasion.analyze)
-                        if self.wifi_detector:
-                            self.sniffer.register_callback(self.wifi_detector.analyze)
-                        self.scanner = NetworkScanner(self.db, interface=self.interface)
-                        if self.blocker:
-                            self.blocker.interface = self.interface
-                            
-                    self.sniffer.start()
-                    self.honeypot.start()
-                    self.ssh_honeypot.start()
-                    self.decoy_generator.start()
-                    self.scanner.start_periodic(60) # Her 60 saniyede bir ağ taraması yap
-                    self.sniffer_running = True
-                    self.start_time = time.time()
-                    self.socketio.emit('status_update', {'running': True}, namespace='/')
-                return jsonify({'success': True, 'running': True})
+                self.socketio.emit('status_update', {'running': True}, namespace='/')
+                return jsonify({'success': True, 'running': True, 'message': 'Engine web_main.py tarafından yönetiliyor'})
 
             elif action == 'stop':
-                if self.sniffer_running:
-                    self.sniffer.stop()
-                    self.honeypot.stop()
-                    self.ssh_honeypot.stop()
-                    self.decoy_generator.stop()
-                    self.scanner.stop()
-                    self.sniffer_running = False
-                    self.socketio.emit('status_update', {'running': False}, namespace='/')
-                return jsonify({'success': True, 'running': False})
+                self.socketio.emit('status_update', {'running': False}, namespace='/')
+                return jsonify({'success': True, 'running': False, 'message': 'Engine web_main.py tarafından yönetiliyor'})
+
+            return jsonify({'success': False, 'error': 'Geçersiz aksiyon'}), 400
 
             return jsonify({'success': False, 'error': 'Geçersiz aksiyon'}), 400
 
