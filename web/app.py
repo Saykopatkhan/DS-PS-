@@ -96,18 +96,12 @@ class IPSWebApp:
 
         # Sniffer ve Scanner
         self.sniffer = FastSniffer(interface=self.interface)
-        self.sniffer.register_callback(self.arp_detector.analyze)
-        self.sniffer.register_callback(self.scan_detector.analyze)
-        self.sniffer.register_callback(self.dns_detector.analyze)
-        self.sniffer.register_callback(self.dhcp_detector.analyze)
-        self.sniffer.register_callback(self.threat_intel.analyze)
-        self.sniffer.register_callback(self.anti_evasion.analyze)
-        self.sniffer.register_callback(self.waf_detector.analyze)
-        self.sniffer.register_callback(self.dpi_detector.analyze)
-        self.sniffer.register_callback(self.c2_detector.analyze)
-        if self.wifi_detector:
-            self.sniffer.register_callback(self.wifi_detector.analyze)
-            
+        
+        # FastSniffer, Scapy nesnesi değil, kendi sözlük (dict) eventlerini döndürür.
+        # Bu yüzden eski Scapy tabanlı callback'leri kaldırıp, 
+        # FastSniffer için merkezi bir handler ekliyoruz.
+        self.sniffer.register_callback(self._handle_fast_sniffer_event)
+        
         from core.scanner import NetworkScanner
         self.scanner = NetworkScanner(self.db, interface=self.interface)
 
@@ -135,6 +129,39 @@ class IPSWebApp:
         self._register_routes()
         print("[DEBUG] Done calling _register_routes...")
         self._register_socketio_events()
+
+    def _handle_fast_sniffer_event(self, event):
+        """FastSniffer'dan gelen tespitleri UI ve DB'ye yönlendirir."""
+        event_type = event.get('type')
+        src_ip = event.get('source_ip')
+        details = event.get('details', '')
+        
+        if event_type == 'DEVICE_DISCOVERED':
+            mac = details
+            self.db.update_ip_mac(src_ip, mac)
+            # Haritanın güncellenmesi için bir sonraki poll'u beklemesi yerine
+            # anında UI'ı uyarabiliriz ama UI fetchRecords ile de güncellenir.
+        else:
+            # Tehdit durumu
+            severity = 'Kritik' if 'SPOOF' in event_type or 'HONEYPOT' in event_type else 'Yüksek'
+            self.db.add_alert(
+                ip=src_ip,
+                mac='N/A',
+                alert_type=event_type,
+                description=details,
+                severity=severity
+            )
+            self.socketio.emit('new_alert', {
+                'id': int(time.time()),
+                'ip': src_ip,
+                'type': event_type,
+                'description': details,
+                'severity': severity,
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+            }, namespace='/')
+            if self.mode == 'ips' and hasattr(self, 'blocker') and self.blocker:
+                self.blocker.block_ip(src_ip, reason=f"FastSniffer: {event_type}", severity='high')
+
 
     def _register_routes(self):
         """Flask route'larını kaydeder."""
