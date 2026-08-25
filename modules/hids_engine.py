@@ -25,22 +25,42 @@ class HIDSEngine:
             'SQL_INJECTION': re.compile(r'(?i)(union.*select|select.*from|insert.*into|drop.*table|waitfor.*delay|1=1|--$)'),
             'RCE_COMMAND_INJ': re.compile(r'(?i)(;|\||`|\$|\b(wget|curl|nc|bash|sh|perl|python|ruby)\b.*\s)'),
             'LFI_DIR_TRAVERSAL': re.compile(r'(?i)(\.\./\.\./|/etc/passwd|/windows/win\.ini|php://filter|php://input)'),
+            'XSS_REFLECTED': re.compile(r'(?i)(<script|javascript:|onerror\s*=|onload\s*=|onclick\s*=|<img[^>]+on\w+\s*=|alert\s*\(|document\.cookie|<svg[^>]+on\w+)'),
             'SCANNER_USER_AGENT': re.compile(r'(?i)(sqlmap|nikto|gobuster|nmap|dirb|w3af|zmap|masscan)'),
+        }
+        
+        # Seviye Bazlı Haritalama
+        self.SEVERITY_MAP = {
+            'SQL_INJECTION': 'critical',
+            'RCE_COMMAND_INJ': 'critical',
+            'LFI_DIR_TRAVERSAL': 'high',
+            'XSS_REFLECTED': 'high',
+            'SCANNER_USER_AGENT': 'medium',
+            'SSH_BRUTE_FORCE': 'high',
+            'HTTP_DDOS': 'high',
         }
         
         # SSH Brute Force takibi (IP -> list of timestamps)
         self.ssh_failures = {}
         self.SSH_BRUTE_LIMIT = 5
         self.SSH_BRUTE_WINDOW = 60 # Saniye
+        
+        # HTTP DDoS takibi (IP -> deque of timestamps)
+        from collections import deque
+        self.http_requests = {}
+        self.DDOS_THRESHOLD = 100  # istek
+        self.DDOS_WINDOW = 10     # saniye
 
     def register_callback(self, callback):
         self.callbacks.append(callback)
         
     def _trigger_alert(self, alert_type, source_ip, details):
+        severity = self.SEVERITY_MAP.get(alert_type, 'medium')
         event = {
             'type': alert_type,
             'source_ip': source_ip,
             'details': details,
+            'severity': severity,
             'timestamp': time.time()
         }
         for cb in self.callbacks:
@@ -97,6 +117,19 @@ class HIDSEngine:
             return
             
         src_ip = ip_match.group(1)
+        
+        # HTTP DDoS Tespiti (IP başına istek hızı)
+        now = time.time()
+        from collections import deque
+        if src_ip not in self.http_requests:
+            self.http_requests[src_ip] = deque()
+        self.http_requests[src_ip].append(now)
+        while self.http_requests[src_ip] and self.http_requests[src_ip][0] < now - self.DDOS_WINDOW:
+            self.http_requests[src_ip].popleft()
+        if len(self.http_requests[src_ip]) >= self.DDOS_THRESHOLD:
+            self._trigger_alert('HTTP_DDOS', src_ip, f"{self.DDOS_WINDOW}s içinde {len(self.http_requests[src_ip])} HTTP isteği")
+            self.http_requests[src_ip].clear()  # Alarm sonrası sıfırla
+            return
         
         for sig_name, sig_regex in self.SIGNATURES.items():
             if sig_regex.search(line):

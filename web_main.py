@@ -53,6 +53,8 @@ def main():
                         help='Web panel host adresi')
     parser.add_argument('--debug', action='store_true',
                         help='Debug modu')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Dry Run: Tespit yap ama engelleme yapma (test modu)')
 
     args = parser.parse_args()
 
@@ -69,7 +71,8 @@ def main():
         mode=args.mode,
         wifi_enabled=args.wifi,
         db_path=args.db,
-        unban_time=args.unban_time
+        unban_time=args.unban_time,
+        dry_run=args.dry_run
     )
 
     # --- Yeni v5.0 Eklentileri (Arka Plan Thread'leri) ---

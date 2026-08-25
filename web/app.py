@@ -44,8 +44,9 @@ class IPSWebApp:
     Flask + SocketIO ile gerçek zamanlı dashboard sunar.
     """
     def __init__(self, interface='eth0', mode='ids', wifi_enabled=False,
-                 db_path='ds_ips.db', unban_time=3600):
+                 db_path='ds_ips.db', unban_time=3600, dry_run=False):
         # Flask uygulaması
+        self.dry_run = dry_run
         self.app = Flask(__name__,
                          template_folder=os.path.join(os.path.dirname(__file__), 'templates'),
                          static_folder=os.path.join(os.path.dirname(__file__), 'static'))
@@ -61,9 +62,9 @@ class IPSWebApp:
         self.db.set_socketio(self.socketio)
 
         # Blocker (sadece IPS modunda)
-        self.blocker = None
         if self.mode == 'ips':
-            self.blocker = Blocker(self.db, auto_unban_time=unban_time, interface=self.interface)
+            from responder.blocker import Blocker
+            self.blocker = Blocker(self.db, auto_unban_time=unban_time, interface=self.interface, dry_run=self.dry_run)
 
         # Notifier entegrasyonu (Ayarlardan çekecek)
         from responder.notifier import Notifier

@@ -22,27 +22,72 @@ class Blocker:
     """
     SET_NAME = "dsips_blacklist"
     
-    def __init__(self, db: Database, auto_unban_time=3600, interface='eth0'):
+    def __init__(self, db: Database, auto_unban_time=3600, interface='eth0', dry_run=False):
         self.db = db
         self.auto_unban_time = auto_unban_time
         self.interface = interface
         self.blocked_ips = set()
         self.blocked_macs = set()
         self.lock = threading.Lock()
+        self.dry_run = dry_run
         
         self.gateway_ip = None
         self.gateway_mac = None
         
+        # Seviye Bazlı Ban Süresi (saniye)
+        self.BAN_DURATIONS = {
+            'critical': 86400,  # 24 saat
+            'high': 3600,       # 1 saat
+            'medium': 600,      # 10 dakika
+            'low': 300,         # 5 dakika
+        }
+        
+        # Beyaz Liste (asla engellenmeyecekler)
+        self.whitelist = {'127.0.0.1', '::1', '0.0.0.0'}
+        self._load_config()
+        
         self.running = True
         
         # ipset tablosunu başlat (ARP Poisoning yerine)
-        self._init_ipset()
+        if not self.dry_run:
+            self._init_ipset()
+        else:
+            print(f"{Fore.YELLOW}[ℹ️] DRY RUN MODU: Tespit yapılacak ama engelleme YAPILMAYACAK{Style.RESET_ALL}")
         
         # İlk başlatmada aktif banları yükle
         self._load_active_bans()
 
     def _check_root(self) -> bool:
         return os.geteuid() == 0
+
+    def _load_config(self):
+        """JSON yapılandırma dosyasından ayarları yükler."""
+        import json
+        config_path = '/etc/dsips/config.json'
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    cfg = json.load(f)
+                # Whitelist
+                for ip in cfg.get('whitelisted_ips', []):
+                    self.whitelist.add(ip)
+                # Ban süreleri
+                if 'block_critical' in cfg:
+                    self.BAN_DURATIONS['critical'] = cfg['block_critical']
+                if 'block_high' in cfg:
+                    self.BAN_DURATIONS['high'] = cfg['block_high']
+                if 'block_ddos' in cfg:
+                    self.BAN_DURATIONS['medium'] = cfg['block_ddos']
+                # Dry run
+                if cfg.get('dry_run', False):
+                    self.dry_run = True
+                print(f"{Fore.GREEN}[+] Config yüklendi: {config_path}{Style.RESET_ALL}")
+        except Exception:
+            pass  # Config dosyası yoksa varsayılanlar kullanılır
+
+    def get_ban_duration(self, severity: str = 'medium') -> int:
+        """Seviyeye göre ban süresini döner."""
+        return self.BAN_DURATIONS.get(severity, self.auto_unban_time)
 
     def _get_gateway_info(self):
         """Ağ geçidi IP ve MAC adresini tespit eder."""
@@ -85,22 +130,33 @@ class Blocker:
         except Exception as e:
             print(f"{Fore.YELLOW}[!] ipset başlatılamadı (iptables fallback kullanılacak): {e}{Style.RESET_ALL}")
 
-    def block_ip(self, ip, reason='Otomatik tespit'):
-        if not self._check_root():
+    def block_ip(self, ip, reason='Otomatik tespit', severity='medium'):
+        # Beyaz Liste kontrolü
+        if ip in self.whitelist:
+            return
+            
+        if not self._check_root() and not self.dry_run:
             print(f"{Fore.YELLOW}[!] Uyarı: Root yetkisi olmadığı için IP engellenemedi: {ip}{Style.RESET_ALL}")
             return
             
         with self.lock:
             if ip in self.blocked_ips:
                 return
+            
+            ban_duration = self.get_ban_duration(severity)
+            
+            if self.dry_run:
+                print(f"{Fore.CYAN}[🔍 DRY RUN] IP ENGELLENMEZDİ: {ip} | Neden: {reason} | Seviye: {severity} | Süre: {ban_duration}s{Style.RESET_ALL}")
+                self.db.add_ban(ip=ip, mac=None, reason=f"[DRY RUN] {reason}")
+                return
                 
             try:
-                # ipset ile O(1) engelleme (iptables kuralları zaten sete bağlı)
-                subprocess.run(['ipset', 'add', self.SET_NAME, ip, '-exist'], shell=False, capture_output=True)
+                # ipset ile O(1) engelleme (timeout ile otomatik süreli ban)
+                subprocess.run(['ipset', 'add', self.SET_NAME, ip, 'timeout', str(ban_duration), '-exist'], shell=False, capture_output=True)
                 self.blocked_ips.add(ip)
                 
                 self.db.add_ban(ip=ip, mac=None, reason=reason)
-                print(f"{Fore.GREEN}[+] 🔒 IP ipset ile engellendi: {ip} Neden: {reason}{Style.RESET_ALL}")
+                print(f"{Fore.GREEN}[+] 🔒 IP ipset ile engellendi: {ip} | Seviye: {severity} | Süre: {ban_duration}s | Neden: {reason}{Style.RESET_ALL}")
             except Exception as e:
                 print(f"{Fore.RED}[!] Hata: IP engelleme başarısız: {e}{Style.RESET_ALL}")
 

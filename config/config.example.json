@@ -1,0 +1,12 @@
+{
+    "server_name": "ds-ips-server",
+    "telegram_user_id": "",
+    "firewall_backend": "ipset",
+    "ddos_threshold": 100,
+    "ddos_window": 10,
+    "block_critical": 86400,
+    "block_high": 3600,
+    "block_ddos": 600,
+    "whitelisted_ips": ["127.0.0.1", "::1", "192.168.1.1"],
+    "dry_run": false
+}

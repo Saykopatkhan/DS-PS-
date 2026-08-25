@@ -1,0 +1,16 @@
+[Unit]
+Description=DS-IPS Next-Gen Hybrid Intrusion Prevention System
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/kali/İndirilenler/ds_ips_project
+ExecStart=/usr/bin/python3 /home/kali/İndirilenler/ds_ips_project/web_main.py -i wlan0
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
