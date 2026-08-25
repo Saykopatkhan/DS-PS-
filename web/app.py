@@ -298,6 +298,8 @@ class IPSWebApp:
                 else:
                     self.db.add_ban(ip=ip or None, mac=mac or None, reason=reason)
                 return jsonify({'success': True})
+            except ValueError as ve:
+                return jsonify({'success': False, 'error': str(ve)}), 400
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)}), 500
 

@@ -133,11 +133,11 @@ class Blocker:
     def block_ip(self, ip, reason='Otomatik tespit', severity='medium'):
         # Beyaz Liste kontrolü
         if ip in self.whitelist:
-            return
+            raise ValueError(f"Bu IP beyaz listede (korumalı) olduğu için engellenemez: {ip}")
             
         if not self._check_root() and not self.dry_run:
             print(f"{Fore.YELLOW}[!] Uyarı: Root yetkisi olmadığı için IP engellenemedi: {ip}{Style.RESET_ALL}")
-            return
+            raise ValueError("Root (sudo) yetkisi olmadığı için engelleme yapılamadı.")
             
         with self.lock:
             if ip in self.blocked_ips:
@@ -160,10 +160,13 @@ class Blocker:
             except Exception as e:
                 print(f"{Fore.RED}[!] Hata: IP engelleme başarısız: {e}{Style.RESET_ALL}")
 
-    def block_mac(self, mac, reason='Otomatik tespit'):
-        if not self._check_root():
+    def block_mac(self, mac, reason='Otomatik tespit', severity='medium'):
+        if mac == self.gateway_mac:
+            raise ValueError("Ağ geçidi (Modem) MAC adresi engellenemez.")
+            
+        if not self._check_root() and not self.dry_run:
             print(f"{Fore.YELLOW}[!] Uyarı: Root yetkisi olmadığı için MAC engellenemedi: {mac}{Style.RESET_ALL}")
-            return
+            raise ValueError("Root (sudo) yetkisi olmadığı için MAC engellemesi yapılamadı.")
             
         with self.lock:
             if mac in self.blocked_macs:
