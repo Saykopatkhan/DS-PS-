@@ -180,9 +180,9 @@ class Blocker:
                 return
                 
             try:
-                # 1. Yerel Koruma
-                subprocess.run(['iptables', '-A', 'INPUT', '-m', 'mac', '--mac-source', mac, '-j', 'DROP'], shell=False, capture_output=True)
-                subprocess.run(['iptables', '-A', 'FORWARD', '-m', 'mac', '--mac-source', mac, '-j', 'DROP'], shell=False, capture_output=True)
+                # 1. Yerel Koruma (DROP kuralları her zaman en üste -I ile eklenmelidir)
+                subprocess.run(['iptables', '-I', 'INPUT', '-m', 'mac', '--mac-source', mac, '-j', 'DROP'], shell=False, capture_output=True)
+                subprocess.run(['iptables', '-I', 'FORWARD', '-m', 'mac', '--mac-source', mac, '-j', 'DROP'], shell=False, capture_output=True)
                 
                 # 2. Ağ Koruması
                 self.blocked_macs.add(mac)
