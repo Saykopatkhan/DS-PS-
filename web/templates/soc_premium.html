@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DS IPS | Premium SOC Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background-color: #0a192f; color: #e6f1ff; font-family: 'Segoe UI', Tahoma, sans-serif; min-height: 100vh; }
+        .bg-grid { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-image: linear-gradient(rgba(100,255,218,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(100,255,218,0.03) 1px, transparent 1px); background-size: 40px 40px; z-index: -1; }
+        
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 30px; background: rgba(17,34,64,0.95); border-bottom: 1px solid #233554; backdrop-filter: blur(10px); position: sticky; top: 0; z-index: 100; }
+        .header-left { display: flex; align-items: center; gap: 10px; }
+        .logo { display: flex; align-items: center; gap: 10px; }
+        .logo-icon { font-size: 2rem; }
+        .logo h1 { font-size: 1.5rem; color: #e6f1ff; }
+        .accent { color: #64ffda; }
+        .header-right { display: flex; gap: 10px; }
+        
+        .btn { padding: 8px 16px; border: 1px solid #233554; border-radius: 6px; background: #112240; color: #e6f1ff; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; }
+        .btn:hover { background: #233554; }
+        .btn-primary { border-color: #64ffda; color: #64ffda; }
+        .btn-primary:hover { background: rgba(100,255,218,0.1); }
+        .btn-success { border-color: #64ffda; color: #0a192f; background: #64ffda; }
+        .btn-success:hover { background: #52e0c4; }
+        .btn-sm { padding: 4px 10px; font-size: 0.8rem; }
+        .btn-scan { padding: 2px 8px; font-size: 0.7rem; margin-left: 8px; background: #233554; border: 1px solid #64ffda; color: #64ffda; border-radius: 4px; cursor: pointer; }
+        .btn-scan:hover { background: rgba(100,255,218,0.2); }
+        
+        .soc-container { max-width: 1400px; margin: 20px auto; padding: 0 20px; display: flex; flex-direction: column; gap: 20px; }
+        .soc-panel { background: #112240; border: 1px solid #233554; border-radius: 10px; padding: 20px; }
+        .panel-title { font-size: 1.3rem; margin-bottom: 5px; display: flex; align-items: center; gap: 10px; }
+        .panel-title span { font-size: 1.5rem; }
+        .panel-subtitle { color: #8892b0; font-size: 0.9rem; margin-bottom: 15px; }
+        
+        .data-table { width: 100%; border-collapse: collapse; }
+        .data-table th { text-align: left; padding: 10px; color: #64ffda; border-bottom: 2px solid #233554; font-size: 0.85rem; }
+        .data-table td { padding: 10px; border-bottom: 1px solid #1d2d50; vertical-align: top; }
+        .data-table tr:hover { background: rgba(100,255,218,0.03); }
+        
+        .port-badge { background-color: #1a3a5c; color: #64ffda; padding: 2px 6px; border-radius: 4px; margin: 2px; display: inline-block; font-size: 0.8rem; border: 1px solid #64ffda; cursor: pointer; transition: all 0.15s; }
+        .port-badge:hover { background: rgba(100,255,218,0.2); transform: scale(1.05); }
+        .port-badge-extra { background-color: #233554; border-color: #8892b0; color: #8892b0; cursor: pointer; }
+        .port-badge-extra:hover { background: rgba(136,146,176,0.2); }
+        
+        .vuln-desc { white-space: pre-wrap; }
+        .learning-status { color: #ffaa00; font-size: 0.8rem; font-weight: bold; }
+        .profiled-status { color: #64ffda; font-size: 0.8rem; font-weight: bold; }
+
+        /* Custom Modal (CDN bağımlılığı yok) */
+        .port-modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 9999; backdrop-filter: blur(5px); justify-content: center; align-items: center; }
+        .port-modal-overlay.active { display: flex; }
+        .port-modal { background: #112240; border: 1px solid #64ffda; border-radius: 12px; width: 90%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 0 40px rgba(100,255,218,0.15); animation: modalIn 0.2s ease-out; }
+        @keyframes modalIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        .port-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; border-bottom: 1px solid #233554; }
+        .port-modal-header h3 { color: #e2e8f0; font-size: 1.1rem; }
+        .port-modal-close { background: none; border: none; color: #ff4444; font-size: 1.5rem; cursor: pointer; padding: 0 5px; }
+        .port-modal-close:hover { color: #ff6666; }
+        .port-modal-body { padding: 15px 20px; overflow-y: auto; flex: 1; }
+        .port-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #1d2d50; }
+        .port-item:last-child { border-bottom: none; }
+        .port-num { color: #64ffda; font-weight: bold; font-size: 0.95rem; min-width: 80px; }
+        .port-desc { color: #ccd6f6; font-size: 0.85rem; }
+        .port-modal-footer { padding: 12px 20px; border-top: 1px solid #233554; text-align: right; }
+        .port-modal-footer .btn { background: #64ffda; color: #0a192f; border: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="bg-grid"></div>
+    
+    <!-- PORT INFO MODAL -->
+    <div class="port-modal-overlay" id="port-modal">
+        <div class="port-modal">
+            <div class="port-modal-header">
+                <h3 id="port-modal-title">Port Analizi</h3>
+                <button class="port-modal-close" onclick="closePortModal()">✕</button>
+            </div>
+            <div class="port-modal-body" id="port-modal-body"></div>
+            <div class="port-modal-footer">
+                <button class="btn" onclick="closePortModal()">Kapat</button>
+            </div>
+        </div>
+    </div>
+
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-icon">🧠</span>
+                <h1>DS <span class="accent">IPS</span> <span style="font-size:1.2rem; color:#8892b0;">| Premium SOC</span></h1>
+            </div>
+        </div>
+        <div class="header-right">
+            <button class="btn btn-sm btn-primary" onclick="window.location.href='/'">🔙 Ana Ekrana Dön</button>
+            <button class="btn btn-sm btn-success" id="refresh-btn" onclick="refreshData()">🔄 Yenile</button>
+        </div>
+    </header>
+
+    <div class="soc-container">
+        <!-- UEBA Panel -->
+        <div class="soc-panel">
+            <h2 class="panel-title"><span>🤖</span> Kullanıcı Davranış Profilleri (UEBA)</h2>
+            <p class="panel-subtitle">Ağdaki cihazların bağlantı alışkanlıkları yapay zeka destekli davranış motoru tarafından modellenmektedir. Öğrenme modu bittikten sonra anormal port erişimleri engellenir. <br><strong style="color:#64ffda;">📌 Bilgi almak için portların üzerine tıklayın</strong></p>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Cihaz IP</th>
+                        <th>Öğrenilen Portlar</th>
+                        <th>Durum</th>
+                    </tr>
+                </thead>
+                <tbody id="ueba-body">
+                    <tr><td colspan="3">Yükleniyor...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Zafiyet Tarayıcı Panel -->
+        <div class="soc-panel">
+            <h2 class="panel-title"><span>🕷️</span> Otonom Zafiyet Raporları</h2>
+            <p class="panel-subtitle">Ağdaki tüm yerel cihazlar arka planda Nmap ile taranır. Tehlikeli portlar <span style="color:#ff4444;">kırmızı</span>, güvenli sonuçlar <span style="color:#64ffda;">yeşil</span> renkle gösterilir.</p>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Zaman</th>
+                        <th>Hedef Cihaz</th>
+                        <th>Tespit Edilen Zafiyet / Durum</th>
+                    </tr>
+                </thead>
+                <tbody id="vuln-body">
+                    <tr><td colspan="3">Yükleniyor...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // ==================
+        // PORT BİLGİ VERİTABANI
+        // ==================
+        const PORT_DB = {
+            "7":"Echo (Test Servisi)","9":"Discard (Test Servisi)","13":"Daytime","20":"FTP-Data","21":"FTP (Şifresiz Dosya Transferi)","22":"SSH (Uzaktan Güvenli Erişim)","23":"Telnet (Şifresiz Uzaktan Erişim)","25":"SMTP (E-posta Gönderimi)","26":"RSFTP","37":"Time Protocol","53":"DNS (Alan Adı Çözümleme)","80":"HTTP (Web - Şifresiz)","110":"POP3 (E-posta Alma)","111":"RPCbind","135":"RPC (Uzak Yordam Çağrısı)","139":"NetBIOS (Ağ Dosya Paylaşımı)","143":"IMAP (E-posta Eşitleme)","443":"HTTPS (Güvenli Web)","445":"SMB (Dosya Paylaşımı / WannaCry Riski)","513":"rlogin (Uzaktan Giriş)","514":"RSH / Syslog","515":"LPD (Yazıcı)","543":"Kerberos Login","544":"Kerberos Shell","548":"AFP (Apple Dosya Paylaşımı)","554":"RTSP (Medya Akış)","993":"IMAPS (Güvenli IMAP)","995":"POP3S (Güvenli POP3)","1025":"NFS / IIS","1026":"Windows RPC","1027":"Windows RPC","1028":"Windows RPC","1029":"Windows RPC","1433":"MSSQL (Veritabanı)","1521":"Oracle DB","1900":"SSDP/UPnP (Cihaz Keşfi)","2049":"NFS (Ağ Dosya Sistemi)","2121":"FTP Proxy","3128":"Squid HTTP Proxy","3306":"MySQL/MariaDB (Veritabanı)","3389":"RDP (Uzak Masaüstü)","5190":"AIM/ICQ","5353":"mDNS (Multicast DNS)","5432":"PostgreSQL (Veritabanı)","5666":"NRPE (Nagios)","5800":"VNC HTTP","5900":"VNC (Ekran Paylaşımı)","6001":"X11","8008":"HTTP Alternatif","8080":"HTTP Proxy/Alternatif","49152":"Dinamik/Özel Port (Windows RPC)","49153":"Dinamik/Özel Port","49154":"Dinamik/Özel Port","49155":"Dinamik/Özel Port","49156":"Dinamik/Özel Port","49157":"Dinamik/Özel Port"
+        };
+
+        // ==================
+        // PORT MODAL FONKSİYONLARI
+        // ==================
+        // Her cihaz için port verisini saklayacak global nesne
+        let devicePortData = {};
+
+        function showPortModal(ip, portArray) {
+            const modal = document.getElementById('port-modal');
+            const title = document.getElementById('port-modal-title');
+            const body = document.getElementById('port-modal-body');
+            
+            title.textContent = `🔍 Cihaz: ${ip} — Port Analizi (${portArray.length} port)`;
+            
+            let html = '';
+            portArray.forEach(p => {
+                const portStr = String(p).trim();
+                const desc = PORT_DB[portStr] || 'Ephemeral / Özel İletişim Portu';
+                const isDangerous = ['21','22','23','445','3389','1433','3306','5900'].includes(portStr);
+                const color = isDangerous ? '#ff4444' : '#64ffda';
+                const icon = isDangerous ? '⚠️' : '✅';
+                html += `<div class="port-item">
+                    <span class="port-num" style="color:${color};">${icon} Port ${portStr}</span>
+                    <span class="port-desc">${desc}</span>
+                </div>`;
+            });
+            
+            body.innerHTML = html || '<p style="color:#8892b0;">Port bilgisi bulunamadı.</p>';
+            modal.classList.add('active');
+        }
+
+        function closePortModal() {
+            document.getElementById('port-modal').classList.remove('active');
+        }
+
+        // Modal dışına tıklayınca kapat
+        document.getElementById('port-modal').addEventListener('click', function(e) {
+            if (e.target === this) closePortModal();
+        });
+
+        // ESC tuşu ile kapat
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closePortModal();
+        });
+
+        // ==================
+        // VERİ YENİLEME
+        // ==================
+        function refreshData() {
+            const btn = document.getElementById('refresh-btn');
+            if (btn) { btn.textContent = '⏳ Yenileniyor...'; setTimeout(() => btn.textContent = '🔄 Yenile', 600); }
+
+            // UEBA Profilleri
+            fetch('/api/ueba_profiles')
+                .then(r => r.json())
+                .then(data => {
+                    const tbody = document.getElementById('ueba-body');
+                    tbody.innerHTML = '';
+                    
+                    if (!data || Object.keys(data).length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="3" style="color:#8892b0;">Henüz profillenen cihaz yok.</td></tr>';
+                        return;
+                    }
+                    
+                    for (const [ip, info] of Object.entries(data)) {
+                        const allPorts = info.learned_ports || [];
+                        // Global veri deposuna kaydet
+                        devicePortData[ip] = allPorts;
+                        
+                        const tr = document.createElement('tr');
+                        
+                        // Port badge'leri oluştur
+                        let displayPorts = allPorts.slice(0, 15);
+                        let extraCount = allPorts.length > 15 ? allPorts.length - 15 : 0;
+                        
+                        let portsHtml = displayPorts.map(p => 
+                            `<span class="port-badge" data-ip="${ip}" data-port="${p}">${p}</span>`
+                        ).join(' ');
+                        
+                        if (extraCount > 0) {
+                            portsHtml += ` <span class="port-badge port-badge-extra" data-ip="${ip}" data-port="ALL">+${extraCount} port daha...</span>`;
+                        }
+                        
+                        if (!portsHtml) portsHtml = '<span style="color:#8892b0;">Bağlantı Yok</span>';
+                        
+                        // Durum
+                        let statusHtml = '';
+                        if (info.total_connections <= 50) {
+                            statusHtml = `<span class="learning-status">⏳ Öğreniyor (${info.total_connections}/50)</span>`;
+                        } else {
+                            statusHtml = `<span class="profiled-status">✔ Profil Çıkarıldı</span>`;
+                        }
+                        
+                        tr.innerHTML = `
+                            <td>
+                                <strong style="color:#e2e8f0;">${ip}</strong>
+                                <button class="btn-scan" data-scanip="${ip}">🕷️ Tara</button>
+                            </td>
+                            <td>${portsHtml}</td>
+                            <td>${statusHtml}</td>
+                        `;
+                        tbody.appendChild(tr);
+                    }
+                })
+                .catch(err => { console.error('UEBA Error:', err); });
+
+            // Zafiyet Taramaları
+            fetch('/api/vuln_scans')
+                .then(r => r.json())
+                .then(alerts => {
+                    const tbody = document.getElementById('vuln-body');
+                    tbody.innerHTML = '';
+                    
+                    if (!alerts || alerts.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="3" style="color:#8892b0;">Henüz taranan cihaz yok.</td></tr>';
+                        return;
+                    }
+                    
+                    alerts.forEach(a => {
+                        const tr = document.createElement('tr');
+                        const color = (a.severity === 'info') ? '#64ffda' : '#ff4444';
+                        tr.innerHTML = `
+                            <td>${a.timestamp || 'N/A'}</td>
+                            <td><strong style="color:#e2e8f0;">${a.source_ip || 'N/A'}</strong></td>
+                            <td class="vuln-desc" style="color:${color};">${a.description || 'N/A'}</td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                })
+                .catch(err => { console.error('Vuln Error:', err); });
+        }
+
+        // ==================
+        // EVENT DELEGATION (Port Tıklama + Tarama Butonu)
+        // ==================
+        document.addEventListener('click', function(e) {
+            // Port badge tıklama
+            const badge = e.target.closest('.port-badge');
+            if (badge) {
+                const ip = badge.dataset.ip;
+                const port = badge.dataset.port;
+                if (ip && port) {
+                    if (port === 'ALL') {
+                        // Tüm portları göster
+                        showPortModal(ip, devicePortData[ip] || []);
+                    } else {
+                        // Tek port bilgisi göster
+                        showPortModal(ip, [port]);
+                    }
+                }
+                return;
+            }
+            
+            // Tara butonu tıklama
+            const scanBtn = e.target.closest('.btn-scan');
+            if (scanBtn) {
+                const ip = scanBtn.dataset.scanip;
+                if (ip) triggerScan(ip);
+                return;
+            }
+        });
+
+        // ==================
+        // OTONOM TARAMA TETİKLEME
+        // ==================
+        function triggerScan(ip) {
+            fetch('/api/scan_ip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ip: ip })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert('✅ Tarama Başlatıldı!\n\n' + ip + ' otonom tarayıcıya gönderildi.\nSonuçlar birkaç saniye içinde tabloya yansıyacaktır.');
+                    setTimeout(refreshData, 5000);
+                } else {
+                    alert('❌ Hata: ' + (data.error || 'Bilinmeyen hata'));
+                }
+            })
+            .catch(err => { console.error(err); alert('Bağlantı hatası!'); });
+        }
+        
+        // Başlangıç yüklemesi
+        refreshData();
+        // Her 10 saniyede bir otomatik yenile
+        setInterval(refreshData, 10000);
+    </script>
+</body>
+</html>

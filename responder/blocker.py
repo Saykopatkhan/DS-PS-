@@ -1,110 +1,178 @@
+# ========================================================================
+# DS-IPS (Premium SOC Edition)
+# Bu proje Kadir Kırmacı'ya aittir. 
+# Copyright (c) 2026 Kadir Kırmacı. All Rights Reserved.
+# Ticari kullanımı ve tersine mühendislik yapılması kesinlikle yasaktır.
+# ========================================================================
+
 import subprocess
 import threading
 import time
 import os
 from colorama import Fore, Style
 from core.database import Database
+import logging
 from datetime import datetime
 
 class Blocker:
     """
-    Çekirdek Seviyesi Güvenlik Duvarı (ipset + iptables).
-    O(1) zaman karmaşıklığı ile on binlerce IP'yi anında banlayabilir.
-    ARP tabanlı (kararsız) L2 izolasyon tamamen kaldırılmıştır.
+    ipset + iptables tabanlı çekirdek seviyesi güvenlik duvarı.
+    ARP poisoning KALDIRILDI - Ağ kararsızlığı yaratıyordu.
+    Artık O(1) hızında ipset hash:ip tablosu kullanılıyor.
     """
+    SET_NAME = "dsips_blacklist"
+    
     def __init__(self, db: Database, auto_unban_time=3600, interface='eth0'):
         self.db = db
         self.auto_unban_time = auto_unban_time
         self.interface = interface
         self.blocked_ips = set()
+        self.blocked_macs = set()
         self.lock = threading.Lock()
+        
+        self.gateway_ip = None
+        self.gateway_mac = None
+        
         self.running = True
-        self.SET_NAME = "dsips_blacklist"
-
+        
+        # ipset tablosunu başlat (ARP Poisoning yerine)
         self._init_ipset()
+        
+        # İlk başlatmada aktif banları yükle
         self._load_active_bans()
 
     def _check_root(self) -> bool:
         return os.geteuid() == 0
 
-    def _init_ipset(self):
-        """ipset tablosunu ve iptables kuralını oluşturur."""
-        if not self._check_root():
-            return
-            
+    def _get_gateway_info(self):
+        """Ağ geçidi IP ve MAC adresini tespit eder."""
         try:
-            # Önce varsa seti temizle (flush) veya oluştur
-            subprocess.run(["ipset", "create", self.SET_NAME, "hash:ip", "timeout", "0"], stderr=subprocess.DEVNULL)
-            subprocess.run(["ipset", "flush", self.SET_NAME], stderr=subprocess.DEVNULL)
-            
-            # iptables kuralı: Bu setteki her şeyi DROP et (eğer kural yoksa ekle)
-            check_rule = subprocess.run(["iptables", "-C", "INPUT", "-m", "set", "--match-set", self.SET_NAME, "src", "-j", "DROP"], stderr=subprocess.DEVNULL)
-            if check_rule.returncode != 0:
-                subprocess.run(["iptables", "-I", "INPUT", "-m", "set", "--match-set", self.SET_NAME, "src", "-j", "DROP"], check=True)
-                subprocess.run(["iptables", "-I", "FORWARD", "-m", "set", "--match-set", self.SET_NAME, "src", "-j", "DROP"], check=True)
-                
-            print(f"[*] Güvenlik Duvarı: '{self.SET_NAME}' ipset tablosu aktif.")
-        except Exception as e:
-            print(f"[!] ipset/iptables başlatılamadı: {e}")
+            gw = conf.route.route("0.0.0.0")[2]
+            if gw and gw != '0.0.0.0':
+                self.gateway_ip = gw
+                mac = getmacbyip(gw)
+                if mac:
+                    self.gateway_mac = mac
+        except Exception:
+            pass
 
     def _load_active_bans(self):
-        """Veritabanındaki aktif banları belleğe ve ipset'e yükler."""
+        """Veritabanındaki aktif banları belleğe yükler."""
         try:
             bans = self.db.get_active_bans()
             with self.lock:
                 for ban in bans:
                     if ban.get('ip_address'):
                         self.blocked_ips.add(ban['ip_address'])
-                        if self._check_root():
-                            subprocess.run(["ipset", "add", self.SET_NAME, ban['ip_address'], "-exist"], stderr=subprocess.DEVNULL)
+                    if ban.get('mac_address'):
+                        self.blocked_macs.add(ban['mac_address'])
         except Exception:
             pass
 
+    def _init_ipset(self):
+        """ipset tablosunu ve tek bir iptables kuralı oluşturur."""
+        if not self._check_root():
+            return
+        try:
+            subprocess.run(["ipset", "create", self.SET_NAME, "hash:ip", "timeout", "0"], stderr=subprocess.DEVNULL)
+            subprocess.run(["ipset", "flush", self.SET_NAME], stderr=subprocess.DEVNULL)
+            # Tek kural: Bu setteki tüm IP'leri DROP et
+            check = subprocess.run(["iptables", "-C", "INPUT", "-m", "set", "--match-set", self.SET_NAME, "src", "-j", "DROP"], stderr=subprocess.DEVNULL)
+            if check.returncode != 0:
+                subprocess.run(["iptables", "-I", "INPUT", "-m", "set", "--match-set", self.SET_NAME, "src", "-j", "DROP"], check=True)
+                subprocess.run(["iptables", "-I", "FORWARD", "-m", "set", "--match-set", self.SET_NAME, "src", "-j", "DROP"], check=True)
+            print(f"{Fore.GREEN}[+] ipset güvenlik duvarı '{self.SET_NAME}' aktif.{Style.RESET_ALL}")
+        except Exception as e:
+            print(f"{Fore.YELLOW}[!] ipset başlatılamadı (iptables fallback kullanılacak): {e}{Style.RESET_ALL}")
+
     def block_ip(self, ip, reason='Otomatik tespit'):
         if not self._check_root():
-            print(f"{Fore.YELLOW}[!] Uyarı: Root yetkisi yok, iptables atlanacak. Cihaz engellenemeyecek: {ip}{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}[!] Uyarı: Root yetkisi olmadığı için IP engellenemedi: {ip}{Style.RESET_ALL}")
+            return
             
         with self.lock:
             if ip in self.blocked_ips:
-                return False
-            
-            self.blocked_ips.add(ip)
-            if self._check_root():
-                try:
-                    # Command Injection Koruması: List parameter form of subprocess
-                    subprocess.run(["ipset", "add", self.SET_NAME, ip, "-exist"], check=True)
-                    print(f"{Fore.RED}[🔒] {ip} ipset ile engellendi. Neden: {reason}{Style.RESET_ALL}")
-                except Exception as e:
-                    print(f"[!] ipset ekleme hatası: {e}")
-                    
-            self.db.add_ban(ip, 'N/A', reason, self.auto_unban_time)
-            return True
+                return
+                
+            try:
+                # ipset ile O(1) engelleme (iptables kuralları zaten sete bağlı)
+                subprocess.run(['ipset', 'add', self.SET_NAME, ip, '-exist'], shell=False, capture_output=True)
+                self.blocked_ips.add(ip)
+                
+                self.db.add_ban(ip=ip, mac=None, reason=reason)
+                print(f"{Fore.GREEN}[+] 🔒 IP ipset ile engellendi: {ip} Neden: {reason}{Style.RESET_ALL}")
+            except Exception as e:
+                print(f"{Fore.RED}[!] Hata: IP engelleme başarısız: {e}{Style.RESET_ALL}")
 
     def block_mac(self, mac, reason='Otomatik tespit'):
-        # MAC bazlı engelleme artık ipset üzerinden yapılamaz (hash:ip kullandık)
-        # Sadece veritabanına ekler, L2 arp izolasyonu kaldırıldı.
-        self.db.add_ban('N/A', mac, reason, self.auto_unban_time)
-        return True
+        if not self._check_root():
+            print(f"{Fore.YELLOW}[!] Uyarı: Root yetkisi olmadığı için MAC engellenemedi: {mac}{Style.RESET_ALL}")
+            return
+            
+        with self.lock:
+            if mac in self.blocked_macs:
+                return
+                
+            try:
+                # 1. Yerel Koruma
+                subprocess.run(['iptables', '-A', 'INPUT', '-m', 'mac', '--mac-source', mac, '-j', 'DROP'], shell=False, capture_output=True)
+                subprocess.run(['iptables', '-A', 'FORWARD', '-m', 'mac', '--mac-source', mac, '-j', 'DROP'], shell=False, capture_output=True)
+                
+                # 2. Ağ Koruması
+                self.blocked_macs.add(mac)
+                
+                self.db.add_ban(ip=None, mac=mac, reason=reason)
+                print(f"{Fore.GREEN}[+] Başarılı: MAC engellendi ve ağdan izole edildi: {mac} Neden: {reason}{Style.RESET_ALL}")
+            except Exception as e:
+                print(f"{Fore.RED}[!] Hata: MAC engelleme başarısız: {e}{Style.RESET_ALL}")
 
     def unblock_ip(self, ip):
+        if not self._check_root():
+            return
+            
         with self.lock:
-            if ip in self.blocked_ips:
-                self.blocked_ips.remove(ip)
-            if self._check_root():
-                try:
-                    subprocess.run(["ipset", "del", self.SET_NAME, ip, "-exist"], stderr=subprocess.DEVNULL)
-                    print(f"{Fore.GREEN}[🔓] {ip} ipset engeli kaldırıldı.{Style.RESET_ALL}")
-                except Exception:
-                    pass
-            self.db.remove_ban(ip=ip)
-            return True
+            try:
+                subprocess.run(['ipset', 'del', self.SET_NAME, ip, '-exist'], shell=False, capture_output=True)
+                if ip in self.blocked_ips:
+                    self.blocked_ips.remove(ip)
+                if hasattr(self.db, 'remove_ban'):
+                    self.db.remove_ban(ip=ip)
+                print(f"{Fore.YELLOW}[*] 🔓 IP engeli kaldırıldı: {ip}{Style.RESET_ALL}")
+            except Exception as e:
+                print(f"{Fore.RED}[!] Hata: IP engeli kaldırılırken hata oluştu: {e}{Style.RESET_ALL}")
 
     def unblock_mac(self, mac):
-        self.db.remove_ban(mac=mac)
-        return True
-        
-    def check_expired_bans(self):
-        """Web uygulamasında periyodik çalışacak fonksiyon."""
-        self.db.cleanup_expired_bans()
-        self.blocked_ips.clear()
-        self._load_active_bans()
+        if not self._check_root():
+            return
+            
+        with self.lock:
+            try:
+                subprocess.run(['iptables', '-D', 'INPUT', '-m', 'mac', '--mac-source', mac, '-j', 'DROP'], shell=False, capture_output=True)
+                subprocess.run(['iptables', '-D', 'FORWARD', '-m', 'mac', '--mac-source', mac, '-j', 'DROP'], shell=False, capture_output=True)
+                if mac in self.blocked_macs:
+                    self.blocked_macs.remove(mac)
+                if hasattr(self.db, 'remove_ban'):
+                    self.db.remove_ban(mac=mac)
+                print(f"{Fore.YELLOW}[*] Bilgi: MAC engeli (ve izolasyon) kaldırıldı: {mac}{Style.RESET_ALL}")
+            except Exception as e:
+                print(f"{Fore.RED}[!] Hata: MAC engeli kaldırılırken hata oluştu: {e}{Style.RESET_ALL}")
+
+    def unblock_all(self):
+        """Tüm engelleri kaldırır."""
+        with self.lock:
+            ips_to_unblock = self.blocked_ips.copy()
+            macs_to_unblock = self.blocked_macs.copy()
+            
+        for ip in ips_to_unblock:
+            self.unblock_ip(ip)
+        for mac in macs_to_unblock:
+            self.unblock_mac(mac)
+
+    def get_blocked_hosts(self) -> dict:
+        """Şu anda izole edilmiş ve engellenmiş cihazları döner."""
+        with self.lock:
+            return {'ips': list(self.blocked_ips), 'macs': list(self.blocked_macs)}
+            
+    def stop(self):
+        """Bloklayıcı thread'leri durdurur."""
+        self.running = False
