@@ -169,7 +169,7 @@ class Blocker:
 
     def block_mac(self, mac, reason='Otomatik tespit', severity='medium'):
         if mac == self.gateway_mac:
-            raise ValueError("Ağ geçidi (Modem) MAC adresi engellenemez.")
+            print(f"{Fore.RED}[!] UYARI: Ağ Geçidi (Modem) MAC adresi engelleniyor! Tüm ağ bağlantısı kesilecek.{Style.RESET_ALL}")
             
         if not self._check_root() and not self.dry_run:
             print(f"{Fore.YELLOW}[!] Uyarı: Root yetkisi olmadığı için MAC engellenemedi: {mac}{Style.RESET_ALL}")
