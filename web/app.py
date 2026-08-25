@@ -132,6 +132,7 @@ class IPSWebApp:
         self._register_socketio_events()
         
         # Legacy sniffer callback'leri
+        self.legacy_sniffer.register_callback(self.arp_detector.analyze)
         self.legacy_sniffer.register_callback(self.scan_detector.analyze)
         self.legacy_sniffer.register_callback(self.dns_detector.analyze)
         self.legacy_sniffer.register_callback(self.dhcp_detector.analyze)
@@ -346,6 +347,21 @@ class IPSWebApp:
                         self.interface = new_interface
                         self.sniffer = FastSniffer(interface=self.interface)
                         self.sniffer.register_callback(self._handle_fast_sniffer_event)
+                        
+                        from core.sniffer import PacketSniffer
+                        self.legacy_sniffer = PacketSniffer(interface=self.interface)
+                        self.legacy_sniffer.register_callback(self.arp_detector.analyze)
+                        self.legacy_sniffer.register_callback(self.scan_detector.analyze)
+                        self.legacy_sniffer.register_callback(self.dns_detector.analyze)
+                        self.legacy_sniffer.register_callback(self.dhcp_detector.analyze)
+                        self.legacy_sniffer.register_callback(self.threat_intel.analyze)
+                        self.legacy_sniffer.register_callback(self.anti_evasion.analyze)
+                        self.legacy_sniffer.register_callback(self.waf_detector.analyze)
+                        self.legacy_sniffer.register_callback(self.dpi_detector.analyze)
+                        self.legacy_sniffer.register_callback(self.c2_detector.analyze)
+                        if self.wifi_detector:
+                            self.legacy_sniffer.register_callback(self.wifi_detector.analyze)
+                            
                         self.scanner = NetworkScanner(self.db, interface=self.interface)
                         if self.blocker:
                             self.blocker.interface = self.interface
