@@ -74,33 +74,33 @@ class IPSWebApp:
 
 
         
-        # Detektörler
-        self.arp_detector = ARPDetector(self.db, self.blocker, auto_ban=False)
-        self.scan_detector = ScanDetector(self.db, self.blocker, auto_ban=False)
-        self.dns_detector = DNSDetector(self.db, self.blocker, auto_ban=False)
-        self.dhcp_detector = DHCPDetector(self.db, self.blocker, auto_ban=False)
-        self.honeypot = Honeypot(self.db, self.blocker, auto_ban=False)
+        self.arp_detector = ARPDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
+        self.scan_detector = ScanDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
+        self.dns_detector = DNSDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
+        self.dhcp_detector = DHCPDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
+        self.honeypot = Honeypot(self.db, getattr(self, 'blocker', None), auto_ban=False)
+        from modules.decoy_traffic import DecoyTrafficGenerator as DecoyGenerator
+        self.decoy_generator = DecoyGenerator(interface=self.interface)
         from modules.ssh_honeypot import SSHHoneypot
-        self.ssh_honeypot = SSHHoneypot(self.db, self.blocker, auto_ban=False, port=22)
-        self.threat_intel = ThreatIntelDetector(self.db, self.blocker, auto_ban=False)
-        self.anti_evasion = AntiEvasionDetector(self.db, self.blocker, auto_ban=False)
-        self.waf_detector = WAFDetector(self.db, self.blocker, auto_ban=False)
-        self.dpi_detector = DPIDetector(self.db, self.blocker, auto_ban=False)
+        self.ssh_honeypot = SSHHoneypot(self.db, getattr(self, 'blocker', None), auto_ban=False, port=22)
+        self.threat_intel = ThreatIntelDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
+        self.anti_evasion = AntiEvasionDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
+        self.waf_detector = WAFDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
+        self.dpi_detector = DPIDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
+        
         from modules.c2_detector import C2BeaconingDetector
-        self.c2_detector = C2BeaconingDetector(self.db, self.blocker, auto_ban=False)
-        from modules.decoy_traffic import DecoyTrafficGenerator
-        self.decoy_generator = DecoyTrafficGenerator()
+        self.c2_detector = C2BeaconingDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
         self.wifi_detector = None
         if self.wifi_enabled:
-            self.wifi_detector = WiFiDetector(self.db, self.blocker, auto_ban=False)
+            from modules.wifi_detector import WiFiDetector
+            self.wifi_detector = WiFiDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
 
-        # Sniffer ve Scanner
         self.sniffer = FastSniffer(interface=self.interface)
-        
-        # FastSniffer, Scapy nesnesi değil, kendi sözlük (dict) eventlerini döndürür.
-        # Bu yüzden eski Scapy tabanlı callback'leri kaldırıp, 
-        # FastSniffer için merkezi bir handler ekliyoruz.
         self.sniffer.register_callback(self._handle_fast_sniffer_event)
+        
+        # L3/L4/L7 derin paket analizi gerektiren (Scapy tabanlı) eski dedektörler
+        # için ikincil bir sniffer (PacketSniffer) başlatıyoruz.
+        self.legacy_sniffer = PacketSniffer(interface=self.interface)
         
         from core.scanner import NetworkScanner
         self.scanner = NetworkScanner(self.db, interface=self.interface)
@@ -129,6 +129,18 @@ class IPSWebApp:
         self._register_routes()
         print("[DEBUG] Done calling _register_routes...")
         self._register_socketio_events()
+        
+        # Legacy sniffer callback'leri
+        self.legacy_sniffer.register_callback(self.scan_detector.analyze)
+        self.legacy_sniffer.register_callback(self.dns_detector.analyze)
+        self.legacy_sniffer.register_callback(self.dhcp_detector.analyze)
+        self.legacy_sniffer.register_callback(self.threat_intel.analyze)
+        self.legacy_sniffer.register_callback(self.anti_evasion.analyze)
+        self.legacy_sniffer.register_callback(self.waf_detector.analyze)
+        self.legacy_sniffer.register_callback(self.dpi_detector.analyze)
+        self.legacy_sniffer.register_callback(self.c2_detector.analyze)
+        if self.wifi_detector:
+            self.legacy_sniffer.register_callback(self.wifi_detector.analyze)
 
     def _handle_fast_sniffer_event(self, event):
         """FastSniffer'dan gelen tespitleri UI ve DB'ye yönlendirir."""
@@ -338,6 +350,7 @@ class IPSWebApp:
                             self.blocker.interface = self.interface
                             
                     self.sniffer.start()
+                    self.legacy_sniffer.start()
                     self.honeypot.start()
                     self.ssh_honeypot.start()
                     self.decoy_generator.start()
@@ -350,6 +363,7 @@ class IPSWebApp:
             elif action == 'stop':
                 if self.sniffer_running:
                     self.sniffer.stop()
+                    self.legacy_sniffer.stop()
                     self.honeypot.stop()
                     self.ssh_honeypot.stop()
                     self.decoy_generator.stop()
