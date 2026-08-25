@@ -331,15 +331,8 @@ class IPSWebApp:
                     new_interface = data.get('interface', self.interface)
                     if new_interface != self.interface:
                         self.interface = new_interface
-                        self.sniffer = PacketSniffer(interface=self.interface)
-                        self.sniffer.register_callback(self.arp_detector.analyze)
-                        self.sniffer.register_callback(self.scan_detector.analyze)
-                        self.sniffer.register_callback(self.dns_detector.analyze)
-                        self.sniffer.register_callback(self.dhcp_detector.analyze)
-                        self.sniffer.register_callback(self.threat_intel.analyze)
-                        self.sniffer.register_callback(self.anti_evasion.analyze)
-                        if self.wifi_detector:
-                            self.sniffer.register_callback(self.wifi_detector.analyze)
+                        self.sniffer = FastSniffer(interface=self.interface)
+                        self.sniffer.register_callback(self._handle_fast_sniffer_event)
                         self.scanner = NetworkScanner(self.db, interface=self.interface)
                         if self.blocker:
                             self.blocker.interface = self.interface
