@@ -16,9 +16,9 @@
     --bg-card-hover: rgba(15, 25, 45, 0.85);
     --bg-input: rgba(20, 30, 50, 0.5);
 
-    --accent: #00e5ff;
-    --accent-dim: rgba(0, 229, 255, 0.15);
-    --accent-glow: rgba(0, 229, 255, 0.4);
+    --accent: #ffd700;
+    --accent-dim: rgba(255, 215, 0, 0.15);
+    --accent-glow: rgba(255, 215, 0, 0.4);
     
     --danger: #ff2a2a;
     --danger-dim: rgba(255, 42, 42, 0.15);
@@ -32,8 +32,8 @@
     --text-secondary: #a3b8cc;
     --text-muted: #5c728a;
 
-    --border: rgba(0, 229, 255, 0.15);
-    --border-hover: rgba(0, 229, 255, 0.4);
+    --border: rgba(255, 215, 0, 0.15);
+    --border-hover: rgba(255, 215, 0, 0.4);
     --border-light: rgba(255, 255, 255, 0.05);
 
     --radius: 20px;
@@ -62,13 +62,28 @@ body {
     position: relative;
 }
 
+body::before {
+    content: '';
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    width: 50vw;
+    height: 50vw;
+    transform: translate(-50%, -50%);
+    background: url('https://upload.wikimedia.org/wikipedia/commons/b/b4/Flag_of_Turkey.svg') no-repeat center center;
+    background-size: contain;
+    opacity: 0.05;
+    z-index: -2;
+    pointer-events: none;
+}
+
 /* Animated Grid Background */
 .bg-grid {
     position: fixed;
     top: 0; left: 0; width: 100vw; height: 100vh;
     background-image: 
-        linear-gradient(rgba(0, 229, 255, 0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 229, 255, 0.03) 1px, transparent 1px);
+        linear-gradient(rgba(255, 215, 0, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 215, 0, 0.05) 1px, transparent 1px);
     background-size: 40px 40px;
     z-index: -1;
     animation: grid-move 20s linear infinite;

@@ -104,6 +104,17 @@ class Database:
                 pass
 
             self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS active_bans (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ip_address TEXT,
+                    mac_address TEXT,
+                    reason TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            self.conn.commit()
+
+            self.cursor.execute('''
                 CREATE TABLE IF NOT EXISTS banned_hosts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ip_address TEXT,
@@ -133,6 +144,17 @@ class Database:
                 )
             ''')
             self.conn.commit()
+
+    def reset_database(self):
+        """Sistem başlatıldığında önceki oturumdan kalan harita ve alarmları sıfırlar."""
+        with self.lock:
+            try:
+                self.cursor.execute("DELETE FROM ip_mac_records")
+                self.cursor.execute("DELETE FROM alerts")
+                self.conn.commit()
+                print(f"{Fore.GREEN}[+] Veritabanı temizlendi (Cihaz geçmişi ve alarmlar sıfırlandı).{Style.RESET_ALL}")
+            except Exception as e:
+                print(f"{Fore.RED}[!] Veritabanı temizlenirken hata: {e}{Style.RESET_ALL}")
 
     def update_ip_mac(self, ip, mac, vendor='Bilinmiyor', hostname='Bilinmiyor', os_type='Bilinmiyor'):
         """IP ve MAC adresi eşleşmesini kaydeder veya günceller."""

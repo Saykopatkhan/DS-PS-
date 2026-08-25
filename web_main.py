@@ -74,6 +74,9 @@ def main():
         unban_time=args.unban_time,
         dry_run=args.dry_run
     )
+    
+    # Her başlangıçta eski cihaz ve alarm kayıtlarını sıfırla (Kullanıcı İsteği)
+    webapp.db.reset_database()
 
     # --- Yeni v5.0 Eklentileri (Arka Plan Thread'leri) ---
     # HIDS/WAF Motoru (Log izleme - opsiyonel)
