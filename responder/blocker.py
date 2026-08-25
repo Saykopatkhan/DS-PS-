@@ -17,8 +17,7 @@ from datetime import datetime
 class Blocker:
     """
     ipset + iptables tabanlı çekirdek seviyesi güvenlik duvarı.
-    ARP poisoning KALDIRILDI - Ağ kararsızlığı yaratıyordu.
-    Artık O(1) hızında ipset hash:ip tablosu kullanılıyor.
+    Ağ izolasyonu için (ban izole) ARP Poisoning aktif olarak kullanılır.
     """
     SET_NAME = "dsips_blacklist"
     
@@ -56,6 +55,14 @@ class Blocker:
         
         # İlk başlatmada aktif banları yükle
         self._load_active_bans()
+        
+        # Ağ geçidi bilgisini al
+        self._get_gateway_info()
+        
+        # ARP Poisoning Thread'i başlat (İzolasyon için)
+        if not self.dry_run:
+            self.arp_thread = threading.Thread(target=self._arp_poison_thread, daemon=True)
+            self.arp_thread.start()
 
     def _check_root(self) -> bool:
         return os.geteuid() == 0
@@ -235,3 +242,34 @@ class Blocker:
     def stop(self):
         """Bloklayıcı thread'leri durdurur."""
         self.running = False
+
+    def _arp_poison_thread(self):
+        """Banlanmış MAC adreslerini ağdan izole etmek için sürekli sahte ARP paketleri gönderir."""
+        try:
+            from scapy.all import ARP, Ether, sendp
+            import logging
+            logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
+        except ImportError:
+            print(f"{Fore.RED}[!] İzolasyon için scapy gerekli. Lütfen kurun.{Style.RESET_ALL}")
+            return
+
+        while self.running:
+            if not self.gateway_ip or not self.blocked_macs:
+                time.sleep(2)
+                continue
+                
+            try:
+                with self.lock:
+                    macs_to_poison = list(self.blocked_macs)
+                    
+                for mac in macs_to_poison:
+                    if mac == self.gateway_mac:
+                        continue
+                    # Kurbanın ARP önbelleğini zehirle: Gateway IP'si geçersiz bir MAC'te (veya kendi MAC'imizde)
+                    # Böylece internete/ağa çıkışını engellemiş oluruz.
+                    pkt = Ether(dst=mac)/ARP(op=2, psrc=self.gateway_ip, hwsrc="00:00:00:00:00:00", hwdst=mac)
+                    sendp(pkt, iface=self.interface, verbose=False)
+            except Exception:
+                pass
+                
+            time.sleep(1) # Her 1 saniyede bir zehirleme pakedi yolla
