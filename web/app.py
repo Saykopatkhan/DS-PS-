@@ -24,7 +24,7 @@ from flask_socketio import SocketIO, emit
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.database import Database
-from core.sniffer import PacketSniffer
+from core.fast_sniffer import FastSniffer
 from modules.arp_detector import ARPDetector
 from modules.scan_detector import ScanDetector
 from modules.wifi_detector import WiFiDetector
@@ -95,7 +95,7 @@ class IPSWebApp:
             self.wifi_detector = WiFiDetector(self.db, self.blocker, auto_ban=False)
 
         # Sniffer ve Scanner
-        self.sniffer = PacketSniffer(interface=self.interface)
+        self.sniffer = FastSniffer(interface=self.interface)
         self.sniffer.register_callback(self.arp_detector.analyze)
         self.sniffer.register_callback(self.scan_detector.analyze)
         self.sniffer.register_callback(self.dns_detector.analyze)
