@@ -214,6 +214,10 @@ class IPSWebApp:
         def index():
             return render_template('index.html', current_interface=self.interface)
 
+        @self.app.route('/soc_premium')
+        def soc_premium():
+            return render_template('soc_premium.html', current_interface=self.interface)
+
         @self.app.route('/api/alerts')
         def get_alerts():
             limit = request.args.get('limit', 50, type=int)
