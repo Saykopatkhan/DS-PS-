@@ -80,7 +80,7 @@ class IPSWebApp:
         self.dhcp_detector = DHCPDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
         self.honeypot = Honeypot(self.db, getattr(self, 'blocker', None), auto_ban=False)
         from modules.decoy_traffic import DecoyTrafficGenerator as DecoyGenerator
-        self.decoy_generator = DecoyGenerator(interface=self.interface)
+        self.decoy_generator = DecoyGenerator()
         from modules.ssh_honeypot import SSHHoneypot
         self.ssh_honeypot = SSHHoneypot(self.db, getattr(self, 'blocker', None), auto_ban=False, port=22)
         self.threat_intel = ThreatIntelDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
