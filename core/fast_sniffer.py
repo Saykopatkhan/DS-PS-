@@ -53,12 +53,16 @@ class FastSniffer:
             layers = packet_data.get('_source', {}).get('layers', {})
             now = time.time()
 
-            # 1. DAI - ARP Spoofing Tespiti
+            # 1. DAI - ARP Spoofing Tespiti & Cihaz Keşfi
             if 'arp' in layers:
                 arp = layers['arp']
                 if arp.get('arp.opcode') in ['1', '2']: # Request or Reply
                     sender_ip = arp.get('arp.src.proto_ipv4')
                     sender_mac = arp.get('arp.src.hw_mac')
+                    
+                    if sender_ip and sender_mac:
+                        # Cihaz Keşfi Sinyali (Web paneli için)
+                        self._trigger_alert('DEVICE_DISCOVERED', sender_ip, sender_mac)
                     
                     if self.gateway_ip and sender_ip == self.gateway_ip:
                         if self.gateway_mac and sender_mac != self.gateway_mac:

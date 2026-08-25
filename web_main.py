@@ -82,6 +82,58 @@ async def main():
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     
+    # --- DİJİTAL KÖPRÜ (EventBus -> Web Panel & DB) ---
+    def handle_alert_for_web(event):
+        try:
+            # 1. Veritabanına kaydet
+            db.add_alert(
+                ip=event.get('source_ip'),
+                mac='N/A', # Sniffer MAC parse etmiyorsa
+                alert_type=event.get('type'),
+                description=event.get('details'),
+                severity='Yüksek'
+            )
+            # 2. Web paneline canlı (socket.io) gönder
+            webapp.socketio.emit('new_alert', {
+                'id': int(time.time()),
+                'ip': event.get('source_ip'),
+                'type': event.get('type'),
+                'description': event.get('details'),
+                'severity': 'Yüksek',
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+            }, namespace='/')
+            
+            # Otomatik Ban Mantığı (Eski sistemdeki gibi tetiklemek isterseniz)
+            # blocker.block_ip(event.get('source_ip'), reason=event.get('type'))
+            
+        except Exception as e:
+            print(f"[!] Web Alert Köprüsü Hatası: {e}")
+
+    def handle_device_discovered(event):
+        try:
+            ip = event.get('source_ip')
+            mac = event.get('details') # MAC address is passed in details
+            
+            if not ip or not mac: return
+            
+            db.add_ip_mac_record(ip, mac, hostname='Bilinmiyor')
+            webapp.socketio.emit('new_device', {
+                'ip': ip,
+                'mac': mac,
+                'hostname': 'Bilinmiyor',
+                'first_seen': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'last_seen': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'is_trusted': 0
+            }, namespace='/')
+        except Exception:
+            pass
+
+    # EventBus Abonelikleri (Senkronizasyon)
+    import time # handle_alert_for_web için gerekli
+    event_bus.subscribe('ALERT', handle_alert_for_web)
+    event_bus.subscribe('DEVICE_DISCOVERED', handle_device_discovered)
+    # ---------------------------------------------------
+    
     # Sistemin Olay Döngüsünü ve Asenkron Görevleri Başlat
     tasks = []
     tasks.append(asyncio.create_task(event_bus.run()))
