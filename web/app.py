@@ -91,6 +91,11 @@ class IPSWebApp:
         
         from modules.c2_detector import C2BeaconingDetector
         self.c2_detector = C2BeaconingDetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
+        from modules.ueba_detector import UEBADetector
+        self.ueba_detector = UEBADetector(self.db, getattr(self, 'blocker', None), auto_ban=False)
+        from modules.vuln_scanner import VulnScanner
+        self.vuln_scanner = VulnScanner(self.db)
+        
         self.wifi_detector = None
         if self.wifi_enabled:
             from modules.wifi_detector import WiFiDetector
@@ -141,6 +146,7 @@ class IPSWebApp:
         self.legacy_sniffer.register_callback(self.waf_detector.analyze)
         self.legacy_sniffer.register_callback(self.dpi_detector.analyze)
         self.legacy_sniffer.register_callback(self.c2_detector.analyze)
+        self.legacy_sniffer.register_callback(self.ueba_detector.analyze)
         if self.wifi_detector:
             self.legacy_sniffer.register_callback(self.wifi_detector.analyze)
 
@@ -317,6 +323,49 @@ class IPSWebApp:
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)}), 500
 
+        @self.app.route('/api/ueba_profiles', methods=['GET'])
+        def api_ueba_profiles():
+            profiles = {}
+            if hasattr(self, 'ueba_detector'):
+                for ip, ports in self.ueba_detector.learned_ports.items():
+                    profiles[ip] = {
+                        'learned_ports': list(ports),
+                        'total_connections': self.ueba_detector.connection_counts.get(ip, 0)
+                    }
+            return jsonify(profiles)
+
+        @self.app.route('/api/vuln_scans', methods=['GET'])
+        def api_vuln_scans():
+            scans = []
+            try:
+                with self.db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT timestamp, src_ip, description, severity FROM alerts WHERE alert_type LIKE 'Auto-Vuln Scanner%' ORDER BY id DESC LIMIT 50")
+                    rows = cursor.fetchall()
+                    for row in rows:
+                        scans.append({
+                            'timestamp': row['timestamp'],
+                            'target_ip': row['src_ip'],
+                            'result': row['description'],
+                            'status': 'Kritik' if row['severity'] == 'high' else 'Güvenli'
+                        })
+            except Exception as e:
+                pass
+            return jsonify(scans)
+
+        @self.app.route('/api/scan_ip', methods=['POST'])
+        def api_scan_ip():
+            data = request.get_json()
+            ip = data.get('ip')
+            if not ip:
+                return jsonify({'success': False, 'error': 'IP adresi gerekli'})
+            
+            if hasattr(self, 'vuln_scanner'):
+                self.vuln_scanner.scan_ip_async(ip, 'N/A')
+                return jsonify({'success': True})
+                
+            return jsonify({'success': False, 'error': 'Zafiyet tarayıcı modülü aktif değil'})
+
         @self.app.route('/api/unban', methods=['POST'])
         def remove_ban():
             data = request.get_json()
@@ -359,6 +408,7 @@ class IPSWebApp:
                         self.legacy_sniffer.register_callback(self.waf_detector.analyze)
                         self.legacy_sniffer.register_callback(self.dpi_detector.analyze)
                         self.legacy_sniffer.register_callback(self.c2_detector.analyze)
+                        self.legacy_sniffer.register_callback(self.ueba_detector.analyze)
                         if self.wifi_detector:
                             self.legacy_sniffer.register_callback(self.wifi_detector.analyze)
                             
