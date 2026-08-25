@@ -74,6 +74,20 @@
                     <span class="stat-label">Çalışma Süresi</span>
                 </div>
             </div>
+            <div class="stat-card" style="border-left: 2px solid #f59e0b;">
+                <div class="stat-icon">🛡️</div>
+                <div class="stat-info">
+                    <span class="stat-value" id="hids-alerts">0</span>
+                    <span class="stat-label">HIDS/WAF Alarm</span>
+                </div>
+            </div>
+            <div class="stat-card" style="border-left: 2px solid #ef4444;">
+                <div class="stat-icon">🔥</div>
+                <div class="stat-info">
+                    <span class="stat-value" id="ipset-blocks">0</span>
+                    <span class="stat-label">ipset Engel</span>
+                </div>
+            </div>
         </section>
 
         <!-- SOC CHARTS AND MAP ROW -->
@@ -174,6 +188,81 @@
                 </div>
                 <div class="module-footer">
                     <span class="module-status" id="wifi-status">Pasif</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- V5.0 MODULES ROW -->
+        <section class="modules-row" style="margin-top: 0;">
+            <div class="module-card" id="hids-module" style="border-top: 2px solid #f59e0b;">
+                <div class="module-header">
+                    <span class="module-icon">🛡️</span>
+                    <h3>HIDS / WAF Motoru</h3>
+                </div>
+                <div class="module-stats">
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="hids-sqli">0</span>
+                        <span class="module-stat-label">SQLi</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="hids-rce">0</span>
+                        <span class="module-stat-label">RCE</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="hids-lfi">0</span>
+                        <span class="module-stat-label">LFI</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="hids-ssh">0</span>
+                        <span class="module-stat-label">SSH Brute</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="hids-scanner">0</span>
+                        <span class="module-stat-label">Scanner</span>
+                    </div>
+                </div>
+                <div class="module-footer">
+                    <span class="module-status active" id="hids-status">Aktif</span>
+                </div>
+            </div>
+
+            <div class="module-card" id="ipset-module" style="border-top: 2px solid #ef4444;">
+                <div class="module-header">
+                    <span class="module-icon">🔥</span>
+                    <h3>ipset Güvenlik Duvarı</h3>
+                </div>
+                <div class="module-stats">
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="ipset-total">0</span>
+                        <span class="module-stat-label">Toplam Engel</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="ipset-active">0</span>
+                        <span class="module-stat-label">Aktif</span>
+                    </div>
+                </div>
+                <div class="module-footer">
+                    <span class="module-status active">O(1) Kernel</span>
+                </div>
+            </div>
+
+            <div class="module-card" id="telegram-module" style="border-top: 2px solid #3b82f6;">
+                <div class="module-header">
+                    <span class="module-icon">📲</span>
+                    <h3>Telegram C2 Bot</h3>
+                </div>
+                <div class="module-stats">
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="tg-sent">0</span>
+                        <span class="module-stat-label">Gönderilen</span>
+                    </div>
+                    <div class="module-stat">
+                        <span class="module-stat-value" id="tg-commands">0</span>
+                        <span class="module-stat-label">Komut</span>
+                    </div>
+                </div>
+                <div class="module-footer">
+                    <span class="module-status" id="tg-status" style="color: #8892b0;">Bağlantı Bekleniyor</span>
                 </div>
             </div>
         </section>
@@ -498,6 +587,14 @@
                                 alertChart.data.datasets[0].backgroundColor = ['#ff4444', '#ffaa00', '#64ffda', '#8892b0'];
                                 alertChart.update();
                             }
+                            
+                            // V5.0: ipset ve ban sayacı güncelleme
+                            if (stats.active_bans !== undefined) {
+                                const ipsetActiveEl = document.getElementById('ipset-active');
+                                if (ipsetActiveEl) ipsetActiveEl.innerText = stats.active_bans;
+                                const ipsetBlocksEl = document.getElementById('ipset-blocks');
+                                if (ipsetBlocksEl) ipsetBlocksEl.innerText = stats.active_bans;
+                            }
                         } catch(e) {
                             console.error("Dashboard güncelleme hatası: ", e);
                         }
@@ -524,6 +621,45 @@
                                     }
                                 }, 100);
                             }
+                            // ==========================================
+                            // V5.0 MODÜL KART SAYACI GÜNCELLEME
+                            // ==========================================
+                            const alertType = (data.type || data.alert_type || '').toUpperCase();
+                            if (alertType.includes('SQL')) {
+                                const el = document.getElementById('hids-sqli');
+                                if (el) el.innerText = parseInt(el.innerText || 0) + 1;
+                                const hel = document.getElementById('hids-alerts');
+                                if (hel) hel.innerText = parseInt(hel.innerText || 0) + 1;
+                            } else if (alertType.includes('RCE') || alertType.includes('COMMAND')) {
+                                const el = document.getElementById('hids-rce');
+                                if (el) el.innerText = parseInt(el.innerText || 0) + 1;
+                                const hel = document.getElementById('hids-alerts');
+                                if (hel) hel.innerText = parseInt(hel.innerText || 0) + 1;
+                            } else if (alertType.includes('LFI') || alertType.includes('TRAVERSAL')) {
+                                const el = document.getElementById('hids-lfi');
+                                if (el) el.innerText = parseInt(el.innerText || 0) + 1;
+                                const hel = document.getElementById('hids-alerts');
+                                if (hel) hel.innerText = parseInt(hel.innerText || 0) + 1;
+                            } else if (alertType.includes('SSH') || alertType.includes('BRUTE')) {
+                                const el = document.getElementById('hids-ssh');
+                                if (el) el.innerText = parseInt(el.innerText || 0) + 1;
+                                const hel = document.getElementById('hids-alerts');
+                                if (hel) hel.innerText = parseInt(hel.innerText || 0) + 1;
+                            } else if (alertType.includes('SCANNER')) {
+                                const el = document.getElementById('hids-scanner');
+                                if (el) el.innerText = parseInt(el.innerText || 0) + 1;
+                                const hel = document.getElementById('hids-alerts');
+                                if (hel) hel.innerText = parseInt(hel.innerText || 0) + 1;
+                            }
+
+                            // ipset engel sayacını güncelle (ban olursa)
+                            if (alertType.includes('BAN') || alertType.includes('BLOCK')) {
+                                const ipsetEl = document.getElementById('ipset-blocks');
+                                if (ipsetEl) ipsetEl.innerText = parseInt(ipsetEl.innerText || 0) + 1;
+                                const ipsetTotalEl = document.getElementById('ipset-total');
+                                if (ipsetTotalEl) ipsetTotalEl.innerText = parseInt(ipsetTotalEl.innerText || 0) + 1;
+                            }
+
                             // ==========================================
                             // RADAR BLIP OLUŞTURMA (Leaflet yerine)
                             // ==========================================
