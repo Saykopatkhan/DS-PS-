@@ -67,12 +67,12 @@ body::before {
     position: fixed;
     top: 50%;
     left: 50%;
-    width: 50vw;
-    height: 50vw;
+    width: 60vw;
+    height: 60vw;
     transform: translate(-50%, -50%);
-    background: url('https://upload.wikimedia.org/wikipedia/commons/b/b4/Flag_of_Turkey.svg') no-repeat center center;
+    background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800"><rect width="1200" height="800" fill="%23050505"/><circle cx="425" cy="400" r="200" fill="%23ffd700"/><circle cx="475" cy="400" r="160" fill="%23050505"/><polygon fill="%23ff2a2a" points="683,400 635,417 649,465 613,429 568,443 596,400 568,357 613,371 649,335 635,383"/></svg>') no-repeat center center;
     background-size: contain;
-    opacity: 0.05;
+    opacity: 0.08;
     z-index: -2;
     pointer-events: none;
 }
