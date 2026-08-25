@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.database import Database
 from core.fast_sniffer import FastSniffer
+from core.sniffer import PacketSniffer
 from modules.arp_detector import ARPDetector
 from modules.scan_detector import ScanDetector
 from modules.wifi_detector import WiFiDetector
