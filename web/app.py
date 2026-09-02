@@ -643,8 +643,8 @@ class IPSWebApp:
         stats_thread.start()
 
         print(f"\n[*] DS IPS Web Panel başlatılıyor...")
-        print(f"[*] Dashboard: http://{host}:{port}")
+        print(f"[*] Dashboard: http://127.0.0.1:{port}")
         print(f"[*] Arayüz: {self.interface} | Mod: {self.mode.upper()} | WiFi: {'Aktif' if self.wifi_enabled else 'Pasif'}")
         print(f"[*] Ctrl+C ile kapatabilirsiniz.\n")
 
-        self.socketio.run(self.app, host=host, port=port, debug=debug)
+        self.socketio.run(self.app, host=host, port=port, debug=debug, allow_unsafe_werkzeug=True)
