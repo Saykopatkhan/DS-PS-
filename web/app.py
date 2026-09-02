@@ -201,18 +201,8 @@ class IPSWebApp:
                 for k in keys_to_delete:
                     self.failed_attempts.pop(k, None)
                 
-                # Ban kontrolü
-                if client_ip in self.failed_attempts:
-                    record = self.failed_attempts[client_ip]
-                    record['last_seen'] = now
-                    if record['lockout_until'] > now:
-                        remaining = int((record['lockout_until'] - now) / 60)
-                        return Response(
-                            f'Bruteforce Korumasi Aktif! 3 kez hatali giris yaptiniz. Lutfen {remaining} dakika sonra tekrar deneyin.', 429
-                        )
-                    elif record['lockout_until'] != 0 and record['lockout_until'] <= now:
-                        self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0, 'last_seen': now}
-                else:
+                # Ban kontrolü (Devre Dışı)
+                if client_ip not in self.failed_attempts:
                     self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0, 'last_seen': now}
 
             # CSRF Koruması (DS-09) - POST/PUT isteklerinde header zorunlu
@@ -223,16 +213,7 @@ class IPSWebApp:
             auth = request.authorization
             
             if not auth or not hmac.compare_digest(auth.username, self.admin_user) or not hmac.compare_digest(auth.password, self.admin_pass):
-                # Yanlış şifre denemesi
-                if auth:
-                    with self.failed_attempts_lock:
-                        self.failed_attempts[client_ip]['count'] += 1
-                        # Kendi ağımızdan test ederken tarayıcının eski şifreyi hızlıca yollaması
-                        # anında banlanmaya yol açmasın diye limiti artırıyoruz
-                        if self.failed_attempts[client_ip]['count'] >= 50:
-                            self.failed_attempts[client_ip]['lockout_until'] = now + (30 * 60)
-                            return Response('Cok fazla hatali deneme! 30 dakika banlandiniz.', 429)
-                        
+                # Yanlış şifre denemesi (Geliştirme aşamasında tarayıcı kilitlenmesin diye ban kaldırıldı)
                 return Response(
                     'Yetkisiz Erisim! Lutfen kullanici adi ve sifre girin.', 401,
                     {'WWW-Authenticate': 'Basic realm="DS IPS Yonetim Paneli"'}
