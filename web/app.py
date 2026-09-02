@@ -227,7 +227,9 @@ class IPSWebApp:
                 if auth:
                     with self.failed_attempts_lock:
                         self.failed_attempts[client_ip]['count'] += 1
-                        if self.failed_attempts[client_ip]['count'] >= 3:
+                        # Kendi ağımızdan test ederken tarayıcının eski şifreyi hızlıca yollaması
+                        # anında banlanmaya yol açmasın diye limiti artırıyoruz
+                        if self.failed_attempts[client_ip]['count'] >= 50:
                             self.failed_attempts[client_ip]['lockout_until'] = now + (30 * 60)
                             return Response('Cok fazla hatali deneme! 30 dakika banlandiniz.', 429)
                         
