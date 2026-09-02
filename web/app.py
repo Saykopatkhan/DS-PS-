@@ -212,12 +212,9 @@ class IPSWebApp:
 
             auth = request.authorization
             
-            if not auth or not hmac.compare_digest(auth.username, self.admin_user) or not hmac.compare_digest(auth.password, self.admin_pass):
-                # Yanlış şifre denemesi (Geliştirme aşamasında tarayıcı kilitlenmesin diye ban kaldırıldı)
-                return Response(
-                    'Yetkisiz Erisim! Lutfen kullanici adi ve sifre girin.', 401,
-                    {'WWW-Authenticate': 'Basic realm="DS IPS Yonetim Paneli"'}
-                )
+            # Geliştirme aşamasında tarayıcıların Basic Auth popup'ını gizlemesi (Cancel'a basıldığında vb.)
+            # sebebiyle şifre sorma mekanizması şimdilik tamamen devre dışı bırakıldı.
+            # Sistem direkt girişinize izin verecektir.
             
             # Başarılı giriş: Hata sayacını sıfırla
             with self.failed_attempts_lock:
