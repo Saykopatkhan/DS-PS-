@@ -242,9 +242,8 @@ class IPSWebApp:
 
         @self.app.after_request
         def add_security_headers(response):
-            response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
             response.headers['X-Content-Type-Options'] = 'nosniff'
-            response.headers['X-Frame-Options'] = 'DENY'
+            response.headers['X-Frame-Options'] = 'SAMEORIGIN'
             response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"
             response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
             return response
