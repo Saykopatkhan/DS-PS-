@@ -308,7 +308,7 @@
         function triggerScan(ip) {
             fetch('/api/scan_ip', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 body: JSON.stringify({ ip: ip })
             })
             .then(r => r.json())

@@ -17,7 +17,7 @@ import csv
 import io
 import psutil
 from datetime import datetime
-from flask import Flask, render_template, jsonify, request, Response
+from flask import Flask, render_template, jsonify, request, Response, session, redirect, url_for
 from flask_socketio import SocketIO, emit
 
 # Proje kök dizinini sys.path'e ekle
@@ -63,6 +63,7 @@ class IPSWebApp:
         self.db.set_socketio(self.socketio)
 
         # Blocker (sadece IPS modunda)
+        self.blocker = None
         if self.mode == 'ips':
             from responder.blocker import Blocker
             self.blocker = Blocker(self.db, auto_unban_time=unban_time, interface=self.interface, dry_run=self.dry_run)
@@ -127,9 +128,7 @@ class IPSWebApp:
         self.ws_token = secrets.token_hex(16)
 
         # Route'ları ve event'leri kaydet
-        print("[DEBUG] Calling _register_routes...")
         self._register_routes()
-        print("[DEBUG] Done calling _register_routes...")
         self._register_socketio_events()
         
         # Legacy sniffer callback'leri
@@ -161,9 +160,11 @@ class IPSWebApp:
             # Tehdit durumu
             severity = 'Kritik' if 'SPOOF' in event_type or 'HONEYPOT' in event_type else 'Yüksek'
             self.db.add_alert(
-                ip=src_ip,
-                mac='N/A',
                 alert_type=event_type,
+                src_ip=src_ip,
+                src_mac='N/A',
+                dst_ip='N/A',
+                dst_mac='N/A',
                 description=details,
                 severity=severity
             )
@@ -181,50 +182,61 @@ class IPSWebApp:
 
     def _register_routes(self):
         """Flask route'larını kaydeder."""
-        print("[DEBUG] Registering routes...")
 
         @self.app.before_request
         def require_auth():
-            # Static dosyaları, Socket.IO ve Bubi Tuzaklarını şifreden muaf tut
-            if (request.path.startswith('/static') or 
-                request.path.startswith('/socket.io') or
-                request.path in ['/sirket_sifreleri.pdf', '/banka_bilgileri.xlsx']):
-                return None
-                
-            import hmac
-            client_ip = request.remote_addr
-            now = time.time()
+            # Giriş sayfası, static dosyalar, Socket.IO ve Bubi Tuzakları şifreden muaf
+            allowed_paths = ['/login', '/static', '/socket.io', '/sirket_sifreleri.pdf', '/banka_bilgileri.xlsx']
+            for path in allowed_paths:
+                if request.path.startswith(path):
+                    return None
             
-            with self.failed_attempts_lock:
-                # Bellek sızıntısını önlemek için süresi dolan IP'leri temizle (DS-11)
-                keys_to_delete = [ip for ip, rec in self.failed_attempts.items() if now - rec.get('last_seen', now) > 3600]
-                for k in keys_to_delete:
-                    self.failed_attempts.pop(k, None)
-                
-                # Ban kontrolü (Devre Dışı)
-                if client_ip not in self.failed_attempts:
-                    self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0, 'last_seen': now}
+            # Oturum kontrolü
+            if not session.get('authenticated'):
+                if request.path.startswith('/api/'):
+                    return jsonify({'success': False, 'error': 'Oturum açılmamış'}), 401
+                return redirect('/login')
 
             # CSRF Koruması (DS-09) - POST/PUT isteklerinde header zorunlu
             if request.method in ['POST', 'PUT', 'DELETE']:
-                if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
-                    return "CSRF Koruması: X-Requested-With header eksik.", 403
+                # Login POST ve normal form submit'ler hariç
+                if request.path != '/login':
+                    if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+                        return "CSRF Koruması: X-Requested-With header eksik.", 403
 
-            auth = request.authorization
+        @self.app.route('/login', methods=['GET', 'POST'])
+        def login():
+            if request.method == 'POST':
+                username = request.form.get('username', '').strip()
+                password = request.form.get('password', '').strip()
+                
+                import hmac
+                if (username and password and
+                    hmac.compare_digest(username, self.admin_user) and 
+                    hmac.compare_digest(password, self.admin_pass)):
+                    session['authenticated'] = True
+                    session['username'] = username
+                    session.permanent = True
+                    print(f"\033[92m[+] Başarılı giriş: {username} ({request.remote_addr})\033[0m")
+                    return redirect('/')
+                else:
+                    print(f"\033[91m[!] Başarısız giriş denemesi: {username} ({request.remote_addr})\033[0m")
+                    return render_template('login.html', error='Kullanıcı adı veya şifre hatalı!')
             
-            # Geliştirme aşamasında tarayıcıların Basic Auth popup'ını gizlemesi (Cancel'a basıldığında vb.)
-            # sebebiyle şifre sorma mekanizması şimdilik tamamen devre dışı bırakıldı.
-            # Sistem direkt girişinize izin verecektir.
-            
-            # Başarılı giriş: Hata sayacını sıfırla
-            with self.failed_attempts_lock:
-                self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0, 'last_seen': now}
+            # GET: Zaten giriş yapmışsa ana sayfaya yönlendir
+            if session.get('authenticated'):
+                return redirect('/')
+            return render_template('login.html')
+
+        @self.app.route('/logout')
+        def logout():
+            session.clear()
+            return redirect('/login')
 
         @self.app.after_request
         def add_security_headers(response):
             response.headers['X-Content-Type-Options'] = 'nosniff'
             response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-            response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"
             response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
             return response
 
@@ -313,19 +325,20 @@ class IPSWebApp:
         def api_vuln_scans():
             scans = []
             try:
-                with self.db.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT timestamp, src_ip, description, severity FROM alerts WHERE alert_type LIKE 'Auto-Vuln Scanner%' ORDER BY id DESC LIMIT 50")
-                    rows = cursor.fetchall()
+                with self.db.lock:
+                    self.db.cursor.execute(
+                        "SELECT timestamp, source_ip, description, severity FROM alerts WHERE alert_type LIKE 'Auto-Vuln Scanner%' ORDER BY id DESC LIMIT 50"
+                    )
+                    rows = self.db.cursor.fetchall()
                     for row in rows:
                         scans.append({
                             'timestamp': row['timestamp'],
-                            'target_ip': row['src_ip'],
-                            'result': row['description'],
-                            'status': 'Kritik' if row['severity'] == 'high' else 'Güvenli'
+                            'source_ip': row['source_ip'],
+                            'description': row['description'],
+                            'severity': row['severity']
                         })
             except Exception as e:
-                pass
+                print(f'[!] Vuln scan veri hatası: {e}')
             return jsonify(scans)
 
         @self.app.route('/api/scan_ip', methods=['POST'])

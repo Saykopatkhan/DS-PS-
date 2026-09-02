@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DS IPS - Giriş</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Segoe UI', 'Inter', sans-serif;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+
+        /* Türk Bayrağı Arka Plan */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: radial-gradient(ellipse at 30% 50%, rgba(200, 16, 46, 0.15) 0%, transparent 60%),
+                        radial-gradient(ellipse at 70% 50%, rgba(218, 165, 32, 0.10) 0%, transparent 60%);
+            z-index: 0;
+        }
+
+        .login-container {
+            position: relative;
+            z-index: 1;
+            width: 420px;
+            padding: 40px;
+            background: rgba(15, 15, 25, 0.95);
+            border: 1px solid rgba(218, 165, 32, 0.3);
+            border-radius: 16px;
+            box-shadow: 0 0 60px rgba(218, 165, 32, 0.1), 0 0 120px rgba(200, 16, 46, 0.05);
+            backdrop-filter: blur(20px);
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .login-header .shield-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        .login-header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #daa520, #ff6b35);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .login-header p {
+            font-size: 13px;
+            color: #888;
+            margin-top: 5px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #daa520;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(218, 165, 32, 0.2);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 15px;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+
+        .form-group input:focus {
+            border-color: #daa520;
+            box-shadow: 0 0 15px rgba(218, 165, 32, 0.2);
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .form-group input::placeholder {
+            color: #555;
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #daa520, #b8860b);
+            border: none;
+            border-radius: 8px;
+            color: #0a0a0f;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+
+        .login-btn:hover {
+            background: linear-gradient(135deg, #ffd700, #daa520);
+            box-shadow: 0 0 30px rgba(218, 165, 32, 0.4);
+            transform: translateY(-1px);
+        }
+
+        .login-btn:active {
+            transform: translateY(0);
+        }
+
+        .error-msg {
+            background: rgba(200, 16, 46, 0.15);
+            border: 1px solid rgba(200, 16, 46, 0.4);
+            color: #ff6b6b;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            margin-bottom: 15px;
+            display: {% if error %}block{% else %}none{% endif %};
+            text-align: center;
+        }
+
+        .footer-info {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 11px;
+            color: #555;
+        }
+
+        .footer-info .flag {
+            color: #c8102e;
+        }
+
+        /* Hilal ve Yıldız Animasyonu */
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+
+        .crescent {
+            position: fixed;
+            top: 15%;
+            right: 10%;
+            font-size: 120px;
+            color: rgba(200, 16, 46, 0.08);
+            z-index: 0;
+            animation: pulse 4s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="crescent">☪</div>
+    
+    <div class="login-container">
+        <div class="login-header">
+            <span class="shield-icon">🛡️</span>
+            <h1>DS IPS</h1>
+            <p>Ağ Saldırı Tespit & Önleme Sistemi</p>
+        </div>
+
+        <div class="error-msg" id="error-msg">
+            {{ error or '' }}
+        </div>
+
+        <form method="POST" action="/login">
+            <div class="form-group">
+                <label>Kullanıcı Adı</label>
+                <input type="text" name="username" id="username" placeholder="admin" autofocus required>
+            </div>
+            <div class="form-group">
+                <label>Şifre</label>
+                <input type="password" name="password" id="password" placeholder="••••••••" required>
+            </div>
+            <button type="submit" class="login-btn">Giriş Yap</button>
+        </form>
+
+        <div class="footer-info">
+            <span class="flag">🇹🇷</span> DS IPS Premium SOC Edition &copy; 2026
+        </div>
+    </div>
+</body>
+</html>

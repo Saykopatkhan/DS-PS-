@@ -89,9 +89,11 @@ def main():
             import time
             try:
                 webapp.db.add_alert(
-                    ip=event.get('source_ip', 'Bilinmiyor'),
-                    mac='N/A',
                     alert_type=event.get('type', 'HIDS'),
+                    src_ip=event.get('source_ip', 'Bilinmiyor'),
+                    src_mac='N/A',
+                    dst_ip='N/A',
+                    dst_mac='N/A',
                     description=event.get('details', ''),
                     severity='Yüksek'
                 )
