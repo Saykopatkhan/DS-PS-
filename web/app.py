@@ -106,17 +106,24 @@ class IPSWebApp:
         self.sniffer.register_callback(self._handle_fast_sniffer_event)
         
         # L3/L4/L7 derin paket analizi gerektiren (Scapy tabanlı) eski dedektörler
-        # için ikincil bir sniffer (PacketSniffer) başlatıyoruz.
-        self.legacy_sniffer = PacketSniffer(interface=self.interface)
-        
-        from core.scanner import NetworkScanner
-        self.scanner = NetworkScanner(self.db, interface=self.interface)
+        # Otonom Tarayıcı & UEBA (opsiyonel modüller)
+        # Sadece import edebiliyorsak başlatalım
+        try:
+            from modules.vuln_scanner import AutoScanner
+            from modules.ueba_detector import UEBADetector
+            self.auto_scanner = AutoScanner(self.db, max_threads=5)
+            self.ueba_detector = UEBADetector(self.db)
+            self.ueba_detector.start_learning()
+        except ImportError:
+            pass
 
-        self.sniffer_running = False
-        self.start_time = None
-
+        # WAF Bruteforce & Dizin Tarama Koruması
         self.failed_attempts = {}
         self.failed_attempts_lock = threading.Lock()
+        
+        # Anti-Capsaicin WAF: Dizin Tarama Takibi
+        self.waf_404_tracker = {}
+        self.waf_404_lock = threading.Lock()
 
         import secrets
         self.admin_user = os.environ.get('DS_IPS_USER') or 'admin'
@@ -189,6 +196,23 @@ class IPSWebApp:
 
         @self.app.before_request
         def require_auth():
+            # ═══ Anti-Capsaicin WAF: Zehirli Başlık Kontrolü ═══
+            malicious_headers = ['X-Original-URL', 'X-Rewrite-URL', 'X-Forwarded-For', 'X-Custom-IP-Authorization', 'X-Host']
+            client_ip = request.remote_addr
+            
+            for header in malicious_headers:
+                if header in request.headers:
+                    print(f"\033[91m[WAF-BLOCK] 🛑 Yasaklı WAF Bypass Başlığı tespit edildi ({header}) IP: {client_ip}\033[0m")
+                    if self.mode == 'ips' and hasattr(self, 'blocker') and self.blocker:
+                        self.blocker.block_ip(client_ip, reason=f"WAF Bypass Denemesi: {header}", severity='critical')
+                        self.db.add_alert(
+                            alert_type='WAF Bypass Attempt',
+                            src_ip=client_ip, src_mac='N/A', dst_ip='N/A', dst_mac='N/A',
+                            description=f"Capsaicin/Hacker {header} başlığı ile yetki atlatmaya çalıştı.",
+                            severity='Kritik'
+                        )
+                    return "WAF: Forbidden Request", 403
+
             # Giriş sayfası, static dosyalar, Socket.IO ve Bubi Tuzakları şifreden muaf
             allowed_paths = ['/login', '/static', '/socket.io', '/sirket_sifreleri.pdf', '/banka_bilgileri.xlsx']
             for path in allowed_paths:
@@ -272,6 +296,92 @@ class IPSWebApp:
             response.headers['X-Frame-Options'] = 'SAMEORIGIN'
             response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
             return response
+            
+        # ═══ Anti-Capsaicin WAF: 404 & 405 Error Handlers ═══
+        @self.app.errorhandler(404)
+        def handle_404(e):
+            client_ip = request.remote_addr
+            now = time.time()
+            is_banned = False
+            
+            # 1. Dizin Tarama (Directory Bruteforce) Takibi
+            with self.waf_404_lock:
+                if client_ip not in self.waf_404_tracker:
+                    self.waf_404_tracker[client_ip] = []
+                
+                # Sadece son 10 saniyedeki 404'leri tut
+                self.waf_404_tracker[client_ip] = [t for t in self.waf_404_tracker[client_ip] if now - t < 10]
+                self.waf_404_tracker[client_ip].append(now)
+                
+                # Eğer 10 saniyede 4'ten fazla 404 aldıysa = Dizin Tarama!
+                if len(self.waf_404_tracker[client_ip]) > 4:
+                    is_banned = True
+                    print(f"\033[91m[WAF-BLOCK] 🛑 Agresif Dizin Tarama tespit edildi! IP: {client_ip}\033[0m")
+                    if self.mode == 'ips' and hasattr(self, 'blocker') and self.blocker:
+                        self.blocker.block_ip(client_ip, reason="Directory Bruteforcing (Capsaicin/Dirb)", severity='critical')
+                        self.db.add_alert(
+                            alert_type='Directory Bruteforce',
+                            src_ip=client_ip, src_mac='N/A', dst_ip='N/A', dst_mac='N/A',
+                            description=f"Kısa sürede çok sayıda 404. Hedef: {request.path}",
+                            severity='Kritik'
+                        )
+                        # Tracker'ı sıfırla ki sürekli ban komutu gitmesin
+                        self.waf_404_tracker[client_ip] = []
+
+            # Zaten banlanmışsa sadece düz 403 dön
+            if is_banned:
+                return "Blocked by WAF", 403
+
+            # 2. Capsaicin Anti-Calibration: Rastgele Boyut (Jitter) & Sahte Token
+            import random, secrets, string
+            
+            # Sahte AWS Anahtarı Formatı (Yüksek Entropi)
+            fake_aws_token = "AKIA" + "".join(random.choices(string.ascii_uppercase + string.digits, k=16))
+            fake_secret_key = "".join(random.choices(string.ascii_letters + string.digits + "/+", k=40))
+            
+            # Rastgele HTML Padding (0 ila 50 satır arası anlamsız yorum)
+            padding_lines = random.randint(0, 50)
+            padding = ""
+            for _ in range(padding_lines):
+                padding += f"\n<!-- {''.join(random.choices(string.ascii_letters, k=random.randint(10,50)))} -->"
+                
+            honeypot_html = f"""
+            <html>
+                <head><title>404 Not Found</title></head>
+                <body>
+                    <h1>Not Found</h1>
+                    <p>The requested URL was not found on the server.</p>
+                    <div style="display:none;">
+                        <!-- HONEYPOT TOKENS -->
+                        AWS_ACCESS_KEY_ID={fake_aws_token}
+                        AWS_SECRET_ACCESS_KEY={fake_secret_key}
+                        STRIPE_API_KEY=sk_live_{secrets.token_hex(20)}
+                    </div>
+                    {padding}
+                </body>
+            </html>
+            """
+            
+            response = self.app.make_response((honeypot_html, 404))
+            # Capsaicin'in Content-Length tabanlı profillemesini yanılt
+            response.headers['Content-Type'] = 'text/html; charset=utf-8'
+            response.headers['X-WAF-Status'] = 'Monitored'
+            return response
+
+        @self.app.errorhandler(405)
+        def handle_405(e):
+            # Method Tampering (Arka kapı / Zafiyet tarama)
+            client_ip = request.remote_addr
+            print(f"\033[91m[WAF-BLOCK] 🛑 Method Tampering tespit edildi! (Metot: {request.method}) IP: {client_ip}\033[0m")
+            if self.mode == 'ips' and hasattr(self, 'blocker') and self.blocker:
+                self.blocker.block_ip(client_ip, reason=f"HTTP Method Tampering ({request.method})", severity='critical')
+                self.db.add_alert(
+                    alert_type='HTTP Method Tampering',
+                    src_ip=client_ip, src_mac='N/A', dst_ip='N/A', dst_mac='N/A',
+                    description=f"Beklenmeyen HTTP Metodu: {request.method} -> {request.path}",
+                    severity='Kritik'
+                )
+            return "WAF: Method Not Allowed", 405
 
         @self.app.route('/api/ws_token')
         def get_ws_token():
