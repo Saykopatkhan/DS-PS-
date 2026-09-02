@@ -67,12 +67,24 @@ body::before {
     position: fixed;
     top: 50%;
     left: 50%;
-    width: 60vw;
-    height: 60vw;
+    width: 70vw;
+    height: 70vw;
     transform: translate(-50%, -50%);
-    background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800"><rect width="1200" height="800" fill="%23050505"/><circle cx="425" cy="400" r="200" fill="%23ffd700"/><circle cx="475" cy="400" r="160" fill="%23050505"/><polygon fill="%23ff2a2a" points="683,400 635,417 649,465 613,429 568,443 596,400 568,357 613,371 649,335 635,383"/></svg>') no-repeat center center;
+    background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800"><rect width="1200" height="800" fill="none"/><circle cx="420" cy="400" r="210" fill="%23daa520"/><circle cx="475" cy="400" r="170" fill="%23050505"/><polygon fill="%23c8102e" points="690,400 638,418 654,470 615,432 567,447 598,400 567,353 615,368 654,330 638,382"/></svg>') no-repeat center center;
     background-size: contain;
-    opacity: 0.08;
+    opacity: 0.12;
+    z-index: -2;
+    pointer-events: none;
+}
+
+/* Kırmızı ve Altın Ambiyans */
+body::after {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: 
+        radial-gradient(ellipse at 25% 40%, rgba(200, 16, 46, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 75% 60%, rgba(218, 165, 32, 0.05) 0%, transparent 50%);
     z-index: -2;
     pointer-events: none;
 }

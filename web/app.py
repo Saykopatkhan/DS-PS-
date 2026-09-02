@@ -120,10 +120,14 @@ class IPSWebApp:
 
         import secrets
         self.admin_user = os.environ.get('DS_IPS_USER') or 'admin'
-        self.admin_pass = os.environ.get('DS_IPS_PASS') or '258099'
+        self.admin_pass = os.environ.get('DS_IPS_PASS') or secrets.token_hex(4)
         
-        print(f"\n\033[92m[+] Kullanıcı Adı: {self.admin_user}\033[0m")
-        print(f"\033[92m[+] Şifre: {self.admin_pass}\033[0m\n")
+        print(f"\n\033[93m{'='*50}\033[0m")
+        print(f"\033[93m  🔐 DS IPS Giriş Bilgileri\033[0m")
+        print(f"\033[93m{'='*50}\033[0m")
+        print(f"\033[92m  Kullanıcı Adı : {self.admin_user}\033[0m")
+        print(f"\033[92m  Şifre         : {self.admin_pass}\033[0m")
+        print(f"\033[93m{'='*50}\033[0m\n")
 
         self.ws_token = secrets.token_hex(16)
 
@@ -209,19 +213,48 @@ class IPSWebApp:
             if request.method == 'POST':
                 username = request.form.get('username', '').strip()
                 password = request.form.get('password', '').strip()
+                client_ip = request.remote_addr
+                now = time.time()
+                
+                # ═══ WAF Bruteforce Koruması ═══
+                with self.failed_attempts_lock:
+                    if client_ip not in self.failed_attempts:
+                        self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0}
+                    
+                    record = self.failed_attempts[client_ip]
+                    
+                    # Ban süresi dolmadıysa reddet
+                    if record['lockout_until'] > now:
+                        remaining = int((record['lockout_until'] - now) / 60) + 1
+                        print(f"\033[91m[WAF] Bruteforce engellendi: {client_ip} ({remaining} dk kaldı)\033[0m")
+                        return render_template('login.html', 
+                            error=f'⛔ WAF Koruması: {record["count"]} başarısız deneme! {remaining} dakika sonra tekrar deneyin.')
                 
                 import hmac
                 if (username and password and
                     hmac.compare_digest(username, self.admin_user) and 
                     hmac.compare_digest(password, self.admin_pass)):
+                    # Başarılı giriş - sayacı sıfırla
+                    with self.failed_attempts_lock:
+                        self.failed_attempts[client_ip] = {'count': 0, 'lockout_until': 0}
                     session['authenticated'] = True
                     session['username'] = username
                     session.permanent = True
-                    print(f"\033[92m[+] Başarılı giriş: {username} ({request.remote_addr})\033[0m")
+                    print(f"\033[92m[+] Başarılı giriş: {username} ({client_ip})\033[0m")
                     return redirect('/')
                 else:
-                    print(f"\033[91m[!] Başarısız giriş denemesi: {username} ({request.remote_addr})\033[0m")
-                    return render_template('login.html', error='Kullanıcı adı veya şifre hatalı!')
+                    # Başarısız giriş - sayacı artır
+                    with self.failed_attempts_lock:
+                        self.failed_attempts[client_ip]['count'] += 1
+                        count = self.failed_attempts[client_ip]['count']
+                        if count >= 5:
+                            self.failed_attempts[client_ip]['lockout_until'] = now + (5 * 60)
+                            print(f"\033[91m[WAF] 🚨 Bruteforce tespit: {client_ip} - {count} deneme, 5 dakika banlandı!\033[0m")
+                            return render_template('login.html', 
+                                error=f'⛔ WAF Koruması Aktif! {count} başarısız deneme - 5 dakika banlandınız.')
+                    
+                    print(f"\033[91m[!] Başarısız giriş denemesi: {username} ({client_ip}) [{count}/5]\033[0m")
+                    return render_template('login.html', error=f'Kullanıcı adı veya şifre hatalı! ({count}/5 deneme)')
             
             # GET: Zaten giriş yapmışsa ana sayfaya yönlendir
             if session.get('authenticated'):
