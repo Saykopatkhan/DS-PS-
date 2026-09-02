@@ -118,15 +118,11 @@ class IPSWebApp:
         self.failed_attempts_lock = threading.Lock()
 
         import secrets
-        self.admin_user = os.environ.get('DS_IPS_USER')
-        self.admin_pass = os.environ.get('DS_IPS_PASS')
-        if not self.admin_user or not self.admin_pass:
-            self.admin_user = 'admin'
-            self.admin_pass = secrets.token_hex(8)
-            print(f"\n\033[91m[!] DİKKAT: DS_IPS_USER veya DS_IPS_PASS ortam değişkenleri bulunamadı.\033[0m")
-            print(f"\033[93m[!] Güvenliğiniz için rastgele şifre üretildi:\033[0m")
-            print(f"\033[92m[+] Kullanıcı Adı: {self.admin_user}\033[0m")
-            print(f"\033[92m[+] Şifre: {self.admin_pass}\033[0m\n")
+        self.admin_user = os.environ.get('DS_IPS_USER') or 'admin'
+        self.admin_pass = os.environ.get('DS_IPS_PASS') or '258099'
+        
+        print(f"\n\033[92m[+] Kullanıcı Adı: {self.admin_user}\033[0m")
+        print(f"\033[92m[+] Şifre: {self.admin_pass}\033[0m\n")
 
         self.ws_token = secrets.token_hex(16)
 
