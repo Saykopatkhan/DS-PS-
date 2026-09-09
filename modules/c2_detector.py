@@ -15,6 +15,7 @@ göndermediğini Zaman Serisi (Time-Series) analiziyle tespit eder.
 import time
 from collections import defaultdict
 import statistics
+import ipaddress
 from scapy.all import IP, TCP, UDP
 
 class C2BeaconingDetector:
@@ -22,6 +23,19 @@ class C2BeaconingDetector:
         self.db = db
         self.blocker = blocker
         self.auto_ban = auto_ban
+        
+        self.whitelist = [
+            ipaddress.ip_network(n) for n in [
+                '172.217.0.0/16', '142.250.0.0/15', '142.251.0.0/16', '173.194.0.0/16', '74.125.0.0/16', '216.58.0.0/16',
+                '34.0.0.0/8', '35.0.0.0/8',
+                '140.82.112.0/20', '185.199.108.0/22',
+                '13.0.0.0/8', '20.0.0.0/8', '40.0.0.0/8', '52.0.0.0/8', '104.208.0.0/13',
+                '104.16.0.0/12', '1.1.1.0/24',
+                '54.0.0.0/8',
+                '192.168.0.0/16', '10.0.0.0/8', '172.16.0.0/12', '127.0.0.0/8',
+                '8.8.8.8/32', '8.8.4.4/32', '1.1.1.1/32', '1.0.0.1/32'
+            ]
+        ]
         
         # Bağlantı zamanları: {(src, dst, dport): [timestamp1, timestamp2, ...]}
         self.conn_times = defaultdict(list)
@@ -35,6 +49,14 @@ class C2BeaconingDetector:
             if packet.haslayer(TCP) or packet.haslayer(UDP):
                 src_ip = packet[IP].src
                 dst_ip = packet[IP].dst
+                
+                try:
+                    src_addr = ipaddress.ip_address(src_ip)
+                    dst_addr = ipaddress.ip_address(dst_ip)
+                    if any(src_addr in net for net in self.whitelist) or any(dst_addr in net for net in self.whitelist):
+                        return
+                except ValueError:
+                    pass
                 
                 if packet.haslayer(TCP):
                     dport = packet[TCP].dport
@@ -75,7 +97,7 @@ class C2BeaconingDetector:
                                 severity='critical'
                             )
                             if self.blocker and self.auto_ban:
-                                self.blocker.block_ip(src_ip)
+                                self.blocker.block_ip(dst_ip)
                             
                             # Alarm spamını önlemek için geçmişi temizle
                             self.conn_times[key] = []

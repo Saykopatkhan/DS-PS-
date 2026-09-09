@@ -11,16 +11,19 @@ Port Scan tespit modülü (SYN, FIN, XMAS, NULL, UDP).
 import time
 from collections import defaultdict
 from scapy.all import TCP, UDP, IP
+import psutil
 from core.database import Database
+import threading
 
 class ScanDetector:
     """
     Farklı tiplerdeki port tarama saldırılarını (Nmap vb.) tespit eder.
     """
-    def __init__(self, db: Database, blocker=None, auto_ban=False):
+    def __init__(self, db: Database, blocker=None, auto_ban=False, auto_vuln_scan_cb=None):
         self.db = db
         self.blocker = blocker
         self.auto_ban = auto_ban
+        self.auto_vuln_scan_cb = auto_vuln_scan_cb
         self.syn_count = defaultdict(lambda: defaultdict(int))
         self.fin_count = defaultdict(lambda: defaultdict(int))
         self.xmas_count = defaultdict(lambda: defaultdict(int))
@@ -31,6 +34,19 @@ class ScanDetector:
         self.time_window = 5.0
         self.last_cleanup = time.time()
         self.last_flood_alert = defaultdict(float)
+        
+        self.local_ips = self._get_local_ips()
+
+    def _get_local_ips(self):
+        ips = {'127.0.0.1'}
+        try:
+            for interface, snics in psutil.net_if_addrs().items():
+                for snic in snics:
+                    if snic.family == 2: # socket.AF_INET
+                        ips.add(snic.address)
+        except Exception:
+            pass
+        return ips
 
     def analyze(self, packet):
         """Paketi analiz ederek port tarama tespiti yapar."""
@@ -39,6 +55,10 @@ class ScanDetector:
         if packet.haslayer(IP):
             src_ip = packet[IP].src
             
+            # Kendi yaptığımız taramaları / trafiği yoksay
+            if src_ip in self.local_ips:
+                return
+                
             if packet.haslayer(TCP):
                 dst_port = packet[TCP].dport
                 flags = packet[TCP].flags
@@ -106,6 +126,8 @@ class ScanDetector:
             )
             if self.blocker and self.auto_ban:
                 self.blocker.block_ip(src_ip)
+            if self.auto_vuln_scan_cb:
+                threading.Thread(target=self.auto_vuln_scan_cb, args=(src_ip,)).start()
 
     def _check_fin_scan(self, src_ip):
         """FIN Scan tespiti."""
@@ -132,6 +154,8 @@ class ScanDetector:
             )
             if self.blocker and self.auto_ban:
                 self.blocker.block_ip(src_ip)
+            if self.auto_vuln_scan_cb:
+                threading.Thread(target=self.auto_vuln_scan_cb, args=(src_ip,)).start()
 
     def _check_null_scan(self, src_ip):
         """NULL Scan tespiti."""

@@ -16,12 +16,16 @@ class Notifier:
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
         self.discord_webhook = discord_webhook
+        self.sent_count = 0
+        self.command_count = 0
 
     def send_alert(self, title, message, severity="high"):
         def _send():
             if self.telegram_token and self.telegram_chat_id:
-                self._send_telegram(f"🚨 <b>{title}</b>\n\n{message}")
-                
+                ok = self._send_telegram(f"🚨 <b>{title}</b>\n\n{message}")
+                if ok:
+                    self.sent_count += 1
+                    
             if self.discord_webhook:
                 color = 16711680 if severity == "critical" else 16753920
                 self._send_discord(title, message, color)
@@ -36,9 +40,10 @@ class Notifier:
                 "text": text,
                 "parse_mode": "HTML"
             }
-            requests.post(url, json=payload, timeout=5)
+            r = requests.post(url, json=payload, timeout=5)
+            return r.status_code == 200
         except Exception:
-            pass
+            return False
 
     def _send_discord(self, title, message, color):
         try:
@@ -52,3 +57,4 @@ class Notifier:
             requests.post(self.discord_webhook, json=payload, timeout=5)
         except Exception:
             pass
+

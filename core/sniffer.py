@@ -89,10 +89,30 @@ class PacketSniffer:
     def dump_pcap(self, filename):
         """
         Mevcut PCAP hafızasını (Ring Buffer) diske yazar.
+        Ayrıca FIFO mekanizması ile dizindeki eski pcap dosyalarını silerek diskin dolmasını (DoS) engeller.
         """
         try:
             wrpcap(filename, list(self.pcap_buffer))
             logging.info(f"PCAP başarıyla kaydedildi: {filename}")
+            
+            # Disk Exhaustion DoS Koruması (FIFO)
+            import os
+            import glob
+            pcap_dir = os.path.dirname(filename)
+            if pcap_dir:
+                pcap_files = glob.glob(os.path.join(pcap_dir, "*.pcap"))
+                MAX_PCAP_FILES = 50
+                if len(pcap_files) > MAX_PCAP_FILES:
+                    # Eskiden yeniye sırala
+                    pcap_files.sort(key=os.path.getmtime)
+                    files_to_delete = pcap_files[:-MAX_PCAP_FILES]
+                    for f in files_to_delete:
+                        try:
+                            os.remove(f)
+                            logging.info(f"FIFO Temizliği: Eski PCAP silindi: {f}")
+                        except Exception as e:
+                            logging.error(f"PCAP silinirken hata: {e}")
+                            
             return True
         except Exception as e:
             logging.error(f"PCAP kaydedilirken hata: {e}")

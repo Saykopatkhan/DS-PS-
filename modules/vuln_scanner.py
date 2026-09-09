@@ -39,20 +39,33 @@ class VulnScanner:
         thread.start()
 
     def _run_nmap_scan(self, ip, mac):
-        """Asıl Nmap taramasını yapan gizli fonksiyon."""
+        """Python socket ile hızlı port taraması yapar (Nmap yetki sorunu yaşamamak için)."""
         try:
-            # -F: Hızlı tarama (Top 100 port), --open: Sadece açıkları göster
-            cmd = f"nmap -F --open -n -T4 {ip}"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
-            
-            output = result.stdout
+            import re
+            import socket
+            if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
+                print(f"Vuln Scanner Warning: Invalid IP format {ip}")
+                return
+                
             open_ports = []
             
-            # Nmap çıktısını analiz et
-            for line in output.split('\n'):
-                if '/tcp' in line and 'open' in line:
-                    port = line.split('/')[0].strip()
-                    open_ports.append(port)
+            # En çok kullanılan kritik 100 portu (hızlı tarama) veya en azından belirlediğimiz kritik portları tara
+            target_ports = list(self.critical_ports.keys())
+            # Biraz daha genel portlar ekleyelim
+            common_ports = ['80', '443', '8080', '8443', '53', '25', '110', '143', '993', '995', '5000', '3306', '5432', '21', '22', '23', '3389', '445', '1433']
+            for p in common_ports:
+                if p not in target_ports:
+                    target_ports.append(p)
+            
+            for port_str in target_ports:
+                port = int(port_str)
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(0.3)  # Hızlı timeout
+                result = s.connect_ex((ip, port))
+                if result == 0:
+                    open_ports.append(port_str)
+                s.close()
+
                     
             # Kritik portlardan herhangi biri açık mı?
             found_criticals = []

@@ -55,6 +55,8 @@ def main():
                         help='Debug modu')
     parser.add_argument('--dry-run', action='store_true',
                         help='Dry Run: Tespit yap ama engelleme yapma (test modu)')
+    parser.add_argument('--reset-db', action='store_true',
+                        help='Başlangıçta veritabanını (eski cihaz/alarm kayıtları) sıfırla')
 
     args = parser.parse_args()
 
@@ -75,8 +77,10 @@ def main():
         dry_run=args.dry_run
     )
     
-    # Her başlangıçta eski cihaz ve alarm kayıtlarını sıfırla (Kullanıcı İsteği)
-    webapp.db.reset_database()
+    # Veritabanını sıfırla (--reset-db bayrağı verilmişse)
+    if args.reset_db:
+        webapp.db.reset_database()
+        print(f"{Fore.GREEN}[+] Veritabanı temizlendi (Cihaz geçmişi ve alarmlar sıfırlandı).{Style.RESET_ALL}")
 
     # --- Yeni v5.0 Eklentileri (Arka Plan Thread'leri) ---
     # HIDS/WAF Motoru (Log izleme - opsiyonel)

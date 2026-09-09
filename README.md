@@ -1,7 +1,7 @@
 <h1 align="center">🛡️🇹🇷 DS-IPS (Intrusion Prevention System) - Premium SOC Edition</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-3.0-00e5ff.svg?style=for-the-badge&logo=appveyor" alt="Version">
+  <img src="https://img.shields.io/badge/Version-5.1-00e5ff.svg?style=for-the-badge&logo=appveyor" alt="Version">
   <img src="https://img.shields.io/badge/Python-3.x-blue.svg?style=for-the-badge&logo=python" alt="Python">
   <img src="https://img.shields.io/badge/License-Proprietary-red.svg?style=for-the-badge&logo=law" alt="License">
   <img src="https://img.shields.io/badge/Security-Military_Grade-success.svg?style=for-the-badge&logo=security" alt="Security">
@@ -23,7 +23,15 @@ Proje, yalnızca ağ paketlerini yakalamakla kalmaz, aynı zamanda sistem yönet
 
 ## 🚀 Neler Yapabilir? (Temel Özellikler)
 
-### 🌟 Yeni Eklenen v3.0 Özellikleri (Premium Güncelleme)
+### 🌟 Yeni Eklenen v5.1 Özellikleri (Tam Donanımlı Aktif Savunma)
+- **Mobil Uyumlu Donanımsal Savunma:** Android ve iOS cihazların modern atlatma yöntemlerine (QUIC, DoH, DoT, Keep-Alive kurnazlıkları) karşı donanımsal `iptables` destekli TCP RST enjeksiyonu ve çift yönlü bant genişliği boğma.
+- **Gelişmiş Captive Portal & DNS Sinkhole:** Karantinaya alınan cihazlar için HTTP/3 yasaklanır ve özel Captive Portal rotaları (`/hotspot-detect.html`, `/generate_204`) üzerinden mobil cihazlara anında "Ağa Giriş Yapın" ekranı fırlatılır.
+- **Keep-Alive Tarpit (Soket Kilitleme):** Saldırganları Tarpit (Bal Küpü) portuna hapsettiğinde, bağlantının kopmasını engellemek için 3 saniyede bir oltalama verisi göndererek saldırganın cihazını sonsuza kadar kilitler.
+- **Honeypot & Deception:** Açık Port (FTP, SSH, Telnet vb.) taramalarına karşı anında Sahte Banner (Fake Banner) dönerek saldırganı kandırır ve oyalarken sistemden tamamen izole eder.
+- **Nginx Gunicorn & Eventlet Production Mimarisi:** Flask'ın test sunucusu yerine asenkron Gunicorn + Eventlet WSGI mimarisine geçilmiştir. Nginx üzerinden Slowloris ve Brute-force saldırılarına karşı `limit_req` ve `limit_conn` kalkanları devreye alınmıştır.
+- **Out-of-Band (Ağ Geçidi Bağımsız) Interception:** DS-IPS ortamda bir Modem (Gateway) olmasa dahi hedef cihazı tespit edip ARP üzerinden trafiğini zorla kendi üzerine çeker (Intercept) ve kuralları uygular.
+
+### 🔥 Gelişmiş v3.0 - v4.0 Özellikleri
 - **Canlı Siber Radar (Cyber Radar):** Ağdaki kritik tehditleri (Örn: Rusya tabanlı C2 bağlantıları) radar ekranında görsel "Blip" (hedef) olarak yansıtan askeri tarz animasyon.
 - **Derin Paket İnceleme (DPI) ile SNI Sniffing:** DNS önbelleğini (Cache) ve Güvenli DNS'i (DoH) aşarak, internete çıkan şifreli (HTTPS) trafiğin içindeki alan adlarını (SNI) cımbızla çeker ve Canlı Gözetleme ekranına anında yansıtır.
 - **Anti-MITM Healing (Aktif İyileştirme):** Ağda bir ARP zehirlenmesi tespit edildiğinde saldırganı engellemekle kalmaz, kurban cihazların bağlantısı kopmasın diye ağa "Onarıcı (Healing)" Broadcast ARP paketleri fırlatır. Kendi koruma modülleriyle (Blocker) çakışmaması için Akıllı Beyaz Liste (Whitelist) kullanır.
@@ -84,10 +92,14 @@ DS-IPS, sürekli gelişen bir siber savunma kalkanı olarak tasarlanmıştır. P
 - Root (`sudo`) yetkisi (IPS ve paket dinleme işlemleri için zorunludur)
 
 ### Başlatma
-1. Sistemdeki gerekli Python kütüphanelerini kurun: `pip install -r requirements.txt` (Eğer varsa)
-2. Uygulamayı başlatın:
+1. Sistemdeki gerekli Python kütüphanelerini kurun (Kali sistemlerinde apt paket yöneticisi ile).
+2. Production Sunucusunu Nginx üzerinden başlatmak için (v5.0+):
 ```bash
-sudo python3 main.py -i eth0 -m ips
+sudo ./start_prod.sh
+```
+3. Eğer geliştirme (Development) ortamında başlatacaksanız:
+```bash
+sudo python3 web_main.py --target 192.168.1.0/24 --interface eth0
 ```
 *(Kablosuz ağ dinlemesi yapmak için komutun sonuna `--wifi` ekleyebilirsiniz.)*
 

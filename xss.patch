@@ -1,0 +1,157 @@
+--- a/web/static/app.src.js
++++ b/web/static/app.src.js
+@@ -75,9 +75,9 @@
+                             pcapBtn.style.marginTop = '10px';
+                             pcapBtn.style.display = 'inline-block';
+                             pcapBtn.style.backgroundColor = '#233554';
+-                            pcapBtn.href = '/static/pcaps/' + data.pcap_file;
++                            pcapBtn.href = '/static/pcaps/' + encodeURIComponent(data.pcap_file);
+                             pcapBtn.download = data.pcap_file;
+-                            pcapBtn.innerHTML = '📥 PCAP İndir (Kanıt)';
++                            pcapBtn.textContent = '📥 PCAP İndir (Kanıt)';
+                             alertDiv.appendChild(pcapBtn);
+                         }
+                     }
+@@ -495,7 +495,7 @@
+     if (!ip || ip === 'N/A' || ip.startsWith('192.168') || ip.startsWith('10.') || ip.startsWith('172.') || ip === '127.0.0.1') return;
+     if (geoMarkers[ip]) return; // Zaten pin var
+ 
+-    fetch(`/api/geoip/${ip}`, {credentials: 'same-origin'})
++    fetch(`/api/geoip/${encodeURIComponent(ip)}`, {credentials: 'same-origin'})
+         .then(r => r.json())
+         .then(data => {
+             if (!geoMapInitialized || !geoMap) return;
+@@ -510,7 +510,7 @@
+             });
+             const marker = L.marker([lat, lon], { icon })
+                 .addTo(geoMap)
+-                .bindPopup(`<b style="color:${color}">${alertType}</b><br>${ip}<br>${data.city || ''}, ${data.country || ''}<br>${data.isp || ''}`);
++                .bindPopup(`<b style="color:${color}">${escapeHtml(alertType)}</b><br>${escapeHtml(ip)}<br>${escapeHtml(data.city || '')}, ${escapeHtml(data.country || '')}<br>${escapeHtml(data.isp || '')}`);
+             geoMarkers[ip] = marker;
+         })
+         .catch(() => {});
+@@ -673,7 +673,8 @@
+     if (empty) empty.remove();
+ 
+     const item = document.createElement('div');
+-    item.className = `alert-item severity-${alert.severity}`;
++    const safeSeverity = escapeHtml(alert.severity || 'low');
++    item.className = `alert-item severity-${safeSeverity}`;
+     if (animate) item.classList.add('animate-in');
+     
+     // Uygula Filtre
+@@ -687,7 +688,7 @@
+ 
+     item.innerHTML = `
+         <div class="alert-header">
+-            <span class="severity-badge ${alert.severity}">${escapeHtml(alert.severity.toUpperCase())}</span>
++            <span class="severity-badge ${safeSeverity}">${escapeHtml((alert.severity || '').toUpperCase())}</span>
+             <span class="alert-type">${escapeHtml(alert.alert_type)}</span>
+             <span class="alert-time">${escapeHtml(timestamp)}</span>
+         </div>
+@@ -1117,7 +1118,7 @@
+         else if (score > 0) scoreColor = '#ffaa00';
+         
+         // Aktif / Pasif (15 Dakika sınırı)
+-        let lastSeenDate = new Date(device.last_seen.replace(' ', 'T') + 'Z');
++        let lastSeenDate = new Date((device.last_seen || '').replace(' ', 'T') + 'Z');
+         let isInactive = (new Date() - lastSeenDate) > 15 * 60 * 1000;
+         let statusBadge = isInactive ? '<span style="color: #8892b0; font-size: 0.8rem; margin-left: 10px;">⚪ Pasif</span>' : '<span style="color: #64ffda; font-size: 0.8rem; margin-left: 10px;">🟢 Aktif</span>';
+         
+@@ -1148,8 +1149,8 @@
+                 <div><span style="color: #64ffda;">OS Tipi:</span> ${osType}</div>
+                 <div><span style="color: #64ffda;">Marka:</span> ${vendor}</div>
+                 <div><span style="color: #64ffda;">Hostname:</span> ${hostname}</div>
+-                <div><span style="color: #64ffda;">Son Görülme:</span> ${lastSeenDate.toLocaleString()}</div>
+-                <div><span style="color: #64ffda;">Tehdit Skoru:</span> <strong style="color: ${scoreColor}">${score}</strong></div>
++                <div><span style="color: #64ffda;">Son Görülme:</span> ${escapeHtml(lastSeenDate.toLocaleString())}</div>
++                <div><span style="color: #64ffda;">Tehdit Skoru:</span> <strong style="color: ${scoreColor}">${escapeHtml(score)}</strong></div>
+             </div>
+         </div>
+         `;
+@@ -1345,16 +1346,29 @@
+ // ---- Yardımcı Fonksiyonlar ----
+ 
+ function escapeHtml(text) {
+-    if (!text) return '';
+-    const div = document.createElement('div');
+-    div.textContent = text;
+-    return div.innerHTML;
++    if (text === null || text === undefined) return '';
++    return String(text)
++        .replace(/&/g, '&amp;')
++        .replace(/</g, '&lt;')
++        .replace(/>/g, '&gt;')
++        .replace(/"/g, '&quot;')
++        .replace(/'/g, '&#39;');
+ }
+ 
+ function escapeAttr(text) {
+-    if (!text) return '';
+-    return text.replace(/'/g, "\\'").replace(/"/g, '\\"');
++    if (text === null || text === undefined) return '';
++    return String(text)
++        .replace(/\\/g, '\\\\')
++        .replace(/'/g, "\\'")
++        .replace(/"/g, '&quot;')
++        .replace(/</g, '&lt;')
++        .replace(/>/g, '&gt;')
++        .replace(/\n/g, '\\n')
++        .replace(/\r/g, '\\r');
+ }
+ 
++function showAlert(title, message, type) {
++    showNotification((title ? `[${title}] ` : '') + message, type || 'info');
++}
++
+@@ -1431,7 +1445,7 @@
+             if (nodeId.endsWith('.1') && nodeData.label.includes('Modem')) return;
+             
+             const header = document.getElementById('context-header');
+-            header.innerHTML = `Hedef: ${escapeHtml(nodeId)}<br><span style="color:#ffaa00; font-size: 0.8rem;">${escapeHtml(nodeData.title.split('\n')[0])}</span>`;
++            header.innerHTML = `Hedef: ${escapeHtml(nodeId)}<br><span style="color:#ffaa00; font-size: 0.8rem;">${escapeHtml((nodeData.title || '').split('\n')[0])}</span>`;
+             
+             // Eğer butonlar yoksa önce context menu HTML içine eklediğimizden emin olmalıyız (Şu an var, ama biz dinamik veya index.html üzerinden ekledik)
+@@ -1510,7 +1524,7 @@
+             nodes.update({
+                 id: 'gateway',
+                 label: `🌐 Modem / Gateway\n(${ip})`,
+-                title: `MAC: ${device.mac_address}\nMarka: ${vendor}\nOS: ${os}\nTehdit Skoru: ${device.threat_score}`,
++                title: `MAC: ${escapeHtml(device.mac_address)}\nMarka: ${escapeHtml(vendor)}\nOS: ${escapeHtml(os)}\nTehdit Skoru: ${escapeHtml(device.threat_score)}`,
+                 color: color
+             });
+             return; // Ayrı bir cihaz olarak eklemeyi atla
+@@ -1527,7 +1541,7 @@
+             nodes.add({
+                 id: ip,
+                 label: `${iconCode}\n${ip}`,
+-                title: `MAC: ${device.mac_address}\nMarka: ${vendor}\nOS: ${os}`,
++                title: `MAC: ${escapeHtml(device.mac_address)}\nMarka: ${escapeHtml(vendor)}\nOS: ${escapeHtml(os)}`,
+                 shape: 'box',
+                 color: color,
+                 font: { color: '#e6f1ff', size: 14 }
+@@ -1604,7 +1618,7 @@
+     document.getElementById('traffic-modal').style.display = 'block';
+     
+     // Geçmişi API'den çek
+-    fetch(`/api/dns_logs/${ip}?limit=${MAX_TRAFFIC_LOGS}`, {credentials: 'same-origin'})
++    fetch(`/api/dns_logs/${encodeURIComponent(ip)}?limit=${MAX_TRAFFIC_LOGS}`, {credentials: 'same-origin'})
+         .then(r => r.json())
+         .then(data => {
+             if (data.length > 0) {
+@@ -1639,7 +1653,7 @@
+     tr.style.backgroundColor = 'rgba(100, 255, 218, 0.05)'; // Yeni satır parlaması
+     
+     tr.innerHTML = `
+-        <td style="padding:10px; color:#8892b0;">${escapeHtml(data.timestamp.split(' ')[1] || data.timestamp)}</td>
++        <td style="padding:10px; color:#8892b0;">${escapeHtml((data.timestamp || '').split(' ')[1] || data.timestamp || '')}</td>
+         <td style="padding:10px; color:#e6f1ff; font-weight:bold;">${escapeHtml(data.domain)}</td>
+         <td style="padding:10px;"><span class="severity-badge medium" style="background:#233554; border-color:#64ffda; color:#64ffda;">${escapeHtml(data.record_type)}</span></td>
+     `;
+@@ -1677,7 +1691,7 @@
+                 if(device.ip_address === 'N/A') return ''; // Geçersizleri atla
+                 
+                 // Aktif/Pasif kontrolü (Son 10 dk)
+-                let lastSeenDate = new Date(device.last_seen.replace(' ', 'T') + 'Z');
++                let lastSeenDate = new Date((device.last_seen || '').replace(' ', 'T') + 'Z');
+                 let isInactive = (new Date() - lastSeenDate) > 10 * 60 * 1000;

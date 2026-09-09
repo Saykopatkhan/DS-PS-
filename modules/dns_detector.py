@@ -46,8 +46,14 @@ class DNSDetector:
                 # Exfiltration (Tunneling) kontrolü: Domainin sub-kısmı aşırı uzun mu?
                 if qname:
                     # DNS Sinkhole Kontrolü
-                    bad_domains = ['malware.com.', 'phishing.net.', 'hacker.io.']
-                    if any(bad in qname for bad in bad_domains):
+                    is_bad = False
+                    if hasattr(self, 'dns_sinkhole') and self.dns_sinkhole:
+                        is_bad = self.dns_sinkhole.is_blocked(qname)
+                    else:
+                        bad_domains = ['malware.com.', 'phishing.net.', 'hacker.io.']
+                        is_bad = any(bad in qname for bad in bad_domains)
+                        
+                    if is_bad:
                         self._trigger_sinkhole(src_ip, qname, packet)
                         return # Spoof yaptık, devam etme
                         

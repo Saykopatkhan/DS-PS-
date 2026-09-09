@@ -4,3 +4,4 @@ scapy
 requests
 paramiko
 colorama
+fpdf

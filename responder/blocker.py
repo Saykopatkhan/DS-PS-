@@ -28,12 +28,14 @@ class Blocker:
     """
     SET_NAME = "dsips_blacklist"
     
-    def __init__(self, db: Database, auto_unban_time=3600, interface='eth0', dry_run=False):
+    def __init__(self, db: Database, auto_unban_time=3600, interface='eth0', dry_run=False, active_defense_mgr=None):
         self.db = db
+        self.active_defense_mgr = active_defense_mgr
         self.auto_unban_time = auto_unban_time
         self.interface = interface
         self.blocked_ips = set()
         self.blocked_macs = set()
+        self.intercepted_macs = set() # DROP olmadan sadece trafiği üzerine çeken MAC'ler
         # IP<->MAC eşleştirme tablosu (ARP poisoning için kritik)
         self.ip_mac_map = {}  # {mac: ip, ...}
         self.mac_ip_map = {}  # {ip: mac, ...}
@@ -71,8 +73,9 @@ class Blocker:
         else:
             print(f"{Fore.YELLOW}[ℹ️] DRY RUN MODU: Tespit yapılacak ama engelleme YAPILMAYACAK{Style.RESET_ALL}")
         
-        # İlk başlatmada aktif banları yükle
+        # İlk başlatmada aktif banları yükle ve kuralları uygula
         self._load_active_bans()
+        self._apply_loaded_bans()
         
         # Ağ geçidi bilgisini al
         self._get_gateway_info()
@@ -136,9 +139,9 @@ class Blocker:
             gw = conf.route.route("0.0.0.0")[2]
             if gw and gw != '0.0.0.0':
                 self.gateway_ip = gw
-                mac = getmacbyip(gw)
-                if mac:
-                    self.gateway_mac = mac
+                self.gateway_mac = getmacbyip(gw)
+                self.whitelist.add(self.gateway_ip)
+                if self.gateway_mac:
                     print(f"{Fore.GREEN}[+] Gateway tespit edildi: {self.gateway_ip} ({self.gateway_mac}){Style.RESET_ALL}")
                 else:
                     print(f"{Fore.YELLOW}[!] Gateway IP bulundu ({gw}) ama MAC alınamadı{Style.RESET_ALL}")
@@ -191,6 +194,47 @@ class Blocker:
         
         return None
 
+    def _resolve_mac_for_ip(self, ip_address):
+        """Bir IP adresi için ağa anında ARP atarak MAC adresini bulur."""
+        # 1. Önce eşleştirme tablosu
+        with self.lock:
+            if ip_address in self.mac_ip_map:
+                return self.mac_ip_map[ip_address]
+                
+        # 2. Veritabanına bak (Geçmiş cihaz kayıtları)
+        if hasattr(self, 'db') and self.db:
+            try:
+                with self.db.lock:
+                    self.db.cursor.execute(
+                        'SELECT mac_address FROM ip_mac_records WHERE ip_address = ? ORDER BY last_seen DESC LIMIT 1',
+                        (ip_address,)
+                    )
+                    row = self.db.cursor.fetchone()
+                    if row:
+                        mac = row['mac_address'] if isinstance(row, dict) else row[0]
+                        with self.lock:
+                            self.mac_ip_map[ip_address] = mac
+                            self.ip_mac_map[mac] = ip_address
+                        return mac
+            except Exception:
+                pass
+        
+        # 3. Aktif ARP sorgusu
+        if self._scapy_available:
+            try:
+                from scapy.all import ARP, Ether, srp
+                ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=ip_address), 
+                           iface=self.interface, timeout=2, verbose=False)
+                for _, rcv in ans:
+                    mac = rcv.hwsrc
+                    with self.lock:
+                        self.mac_ip_map[ip_address] = mac
+                        self.ip_mac_map[mac] = ip_address
+                    return mac
+            except Exception:
+                pass
+        return None
+
     def _load_active_bans(self):
         """Veritabanındaki aktif banları belleğe yükler."""
         try:
@@ -209,6 +253,27 @@ class Blocker:
                         self.mac_ip_map[ip] = mac
         except Exception:
             pass
+
+    def _apply_loaded_bans(self):
+        """Belleğe yüklenen banların sistem kurallarını (ipset/iptables) uygular."""
+        if not self._check_root() or self.dry_run:
+            return
+            
+        with self.lock:
+            # IP'leri ipset'e ekle
+            for ip in self.blocked_ips:
+                try:
+                    subprocess.run(['ipset', 'add', self.SET_NAME, ip, 'timeout', str(self.auto_unban_time), '-exist'], shell=False, capture_output=True)
+                except Exception:
+                    pass
+            
+            # MAC kurallarını iptables'a ekle
+            for mac in self.blocked_macs:
+                try:
+                    subprocess.run(['iptables', '-I', 'INPUT', '-m', 'mac', '--mac-source', mac, '-j', 'DROP'], shell=False, capture_output=True)
+                    subprocess.run(['iptables', '-I', 'FORWARD', '-m', 'mac', '--mac-source', mac, '-j', 'DROP'], shell=False, capture_output=True)
+                except Exception:
+                    pass
 
     def _init_ipset(self):
         """ipset tablosunu ve iptables kurallarını oluşturur."""
@@ -268,6 +333,10 @@ class Blocker:
                     except Exception:
                         pass
                 
+                # HALA BULAMADIYSA AKTİF ARP SORGUSU AT!
+                if not mac:
+                    mac = self._resolve_mac_for_ip(ip)
+                
                 if mac:
                     self.mac_ip_map[ip] = mac
                     self.ip_mac_map[mac] = ip
@@ -280,6 +349,8 @@ class Blocker:
                                  shell=False, capture_output=True)
                 
                 self.db.add_ban(ip=ip, mac=mac, reason=reason)
+                if self.active_defense_mgr:
+                    self.active_defense_mgr.add_rule('block_ip', target_ip=ip, target_mac=mac, parameters={'reason': reason})
                 print(f"{Fore.GREEN}[+] 🔒 IP ENGELLENDİ VE İZOLE EDİLDİ: {ip} ({mac or 'MAC bilinmiyor'}) | Neden: {reason}{Style.RESET_ALL}")
             except Exception as e:
                 print(f"{Fore.RED}[!] Hata: IP engelleme başarısız: {e}{Style.RESET_ALL}")
@@ -315,9 +386,13 @@ class Blocker:
                     subprocess.run(['ipset', 'add', self.SET_NAME, victim_ip, 'timeout', str(self.get_ban_duration(severity)), '-exist'], 
                                  shell=False, capture_output=True)
                     self.db.add_ban(ip=victim_ip, mac=mac, reason=reason)
+                    if self.active_defense_mgr:
+                        self.active_defense_mgr.add_rule('block_mac', target_ip=victim_ip, target_mac=mac, parameters={'reason': reason})
                     print(f"{Fore.GREEN}[+] 🔒 MAC ENGELLENDİ VE İZOLE EDİLDİ: {mac} (IP: {victim_ip}) | Neden: {reason}{Style.RESET_ALL}")
                 else:
                     self.db.add_ban(ip=None, mac=mac, reason=reason)
+                    if self.active_defense_mgr:
+                        self.active_defense_mgr.add_rule('block_mac', target_ip=None, target_mac=mac, parameters={'reason': reason})
                     print(f"{Fore.GREEN}[+] 🔒 MAC ENGELLENDİ: {mac} (IP bilinmiyor, ARP izolasyon aktif) | Neden: {reason}{Style.RESET_ALL}")
                     
                 if mac == self.gateway_mac:
@@ -347,9 +422,154 @@ class Blocker:
                                  shell=False, capture_output=True)
                 if hasattr(self.db, 'remove_ban'):
                     self.db.remove_ban(ip=ip)
+                if self.active_defense_mgr:
+                    self.active_defense_mgr.remove_rule_by_target('block_ip', ip)
                 print(f"{Fore.YELLOW}[*] 🔓 IP engeli kaldırıldı: {ip}{Style.RESET_ALL}")
             except Exception as e:
                 print(f"{Fore.RED}[!] Hata: IP engeli kaldırılırken hata oluştu: {e}{Style.RESET_ALL}")
+
+    def intercept_ip(self, ip):
+        """Out-of-band çalışırken kurbanın trafiğini koparmadan üzerimize çeker."""
+        if not self._check_root():
+            return False
+        if ip in self.whitelist:
+            return False
+        
+        mac = self._resolve_mac_for_ip(ip)
+        if mac:
+            with self.lock:
+                self.intercepted_macs.add(mac)
+            print(f"{Fore.CYAN}[+] 🧲 INTERCEPT AKTİF: {ip} ({mac}) - Trafiği üzerimize çekiliyor.{Style.RESET_ALL}")
+            return True
+        else:
+            print(f"{Fore.YELLOW}[!] INTERCEPT BAŞARISIZ: {ip} için MAC adresi bulunamadı!{Style.RESET_ALL}")
+            return False
+
+    def stop_intercept_ip(self, ip):
+        """Trafik çekme işlemini durdurur (restore yapılır)."""
+        mac = self.mac_ip_map.get(ip)
+        if mac:
+            with self.lock:
+                if mac in self.intercepted_macs:
+                    self.intercepted_macs.remove(mac)
+            
+            # ARP Restore paketleri at
+            try:
+                from scapy.all import ARP, Ether, sendp
+                sendp(Ether(dst=mac)/ARP(op=2, pdst=ip, hwdst=mac, 
+                                        psrc=self.gateway_ip, hwsrc=self.gateway_mac), 
+                      iface=self.interface, count=3, verbose=False)
+                sendp(Ether(dst=self.gateway_mac)/ARP(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac,
+                                        psrc=ip, hwsrc=mac),
+                      iface=self.interface, count=3, verbose=False)
+            except:
+                pass
+            print(f"{Fore.YELLOW}[*] 🔌 INTERCEPT DURDURULDU: {ip}{Style.RESET_ALL}")
+
+    def rate_limit_ip(self, ip, rate="1/s"):
+        """Saldırgan IP adresinin bant genişliğini iptables limit ile donanımsal olarak çok düşük seviyeye kilitler.
+        Mobil cihazların Bypass etmesini önlemek için TCP/UDP tüm trafiğe uygulanır."""
+        if not self._check_root():
+            return False
+        with self.lock:
+            try:
+                # 1. FORWARD zinciri (Download / Ingress Limiti) - Cihaz dışarıdan veri indirirken boğ
+                subprocess.run(['iptables', '-A', 'FORWARD', '-d', ip, '-m', 'limit', '--limit', rate, '-j', 'ACCEPT'], 
+                             shell=False, capture_output=True)
+                subprocess.run(['iptables', '-A', 'FORWARD', '-d', ip, '-j', 'DROP'], 
+                             shell=False, capture_output=True)
+                
+                # 2. FORWARD zinciri (Upload / Egress Limiti) - Cihaz dışarı veri yollarken boğ
+                subprocess.run(['iptables', '-A', 'FORWARD', '-s', ip, '-m', 'limit', '--limit', rate, '-j', 'ACCEPT'], 
+                             shell=False, capture_output=True)
+                subprocess.run(['iptables', '-A', 'FORWARD', '-s', ip, '-j', 'DROP'], 
+                             shell=False, capture_output=True)
+                
+                # 3. INPUT zinciri (Direkt Kali'ye gelen trafik için)
+                subprocess.run(['iptables', '-A', 'INPUT', '-s', ip, '-m', 'limit', '--limit', rate, '-j', 'ACCEPT'], 
+                             shell=False, capture_output=True)
+                subprocess.run(['iptables', '-A', 'INPUT', '-s', ip, '-j', 'DROP'], 
+                             shell=False, capture_output=True)
+                
+                print(f"{Fore.MAGENTA}[☣️] MOBİL UYUMLU BANT GENİŞLİĞİ BOĞULDU ({ip} - {rate}){Style.RESET_ALL}")
+                if self.db:
+                    self.db.add_alert(
+                        alert_type="☣️ Dynamic Rate Limit (Bant Genişliği Boğma)",
+                        src_ip=ip, src_mac="N/A", dst_ip="N/A", dst_mac="N/A",
+                        description=f"Saldırgan IP {ip} bant genişliği {rate} limitine çekilerek erişimi boğuldu (INPUT+FORWARD).",
+                        severity="high"
+                    )
+                if self.active_defense_mgr:
+                    self.active_defense_mgr.add_rule('rate_limit', target_ip=ip, parameters={'rate': rate})
+                
+                # Trafiğin bize uğraması için ARP zehirle! (DROP yapmadan)
+                self.intercept_ip(ip)
+                return True
+            except Exception as e:
+                print(f"{Fore.RED}[!] Rate limit hatası: {e}{Style.RESET_ALL}")
+                return False
+
+    def unrate_limit_ip(self, ip, rate="1/s"):
+        """Bant genişliği boğma kuralını tüm zincirlerden kaldırır."""
+        if not self._check_root():
+            return False
+        with self.lock:
+            try:
+                # Download Limiti Kaldır
+                subprocess.run(['iptables', '-D', 'FORWARD', '-d', ip, '-m', 'limit', '--limit', rate, '-j', 'ACCEPT'], 
+                             shell=False, capture_output=True)
+                subprocess.run(['iptables', '-D', 'FORWARD', '-d', ip, '-j', 'DROP'], 
+                             shell=False, capture_output=True)
+                
+                # Upload Limiti Kaldır
+                subprocess.run(['iptables', '-D', 'FORWARD', '-s', ip, '-m', 'limit', '--limit', rate, '-j', 'ACCEPT'], 
+                             shell=False, capture_output=True)
+                subprocess.run(['iptables', '-D', 'FORWARD', '-s', ip, '-j', 'DROP'], 
+                             shell=False, capture_output=True)
+                
+                # INPUT Limiti Kaldır
+                subprocess.run(['iptables', '-D', 'INPUT', '-s', ip, '-m', 'limit', '--limit', rate, '-j', 'ACCEPT'], 
+                             shell=False, capture_output=True)
+                subprocess.run(['iptables', '-D', 'INPUT', '-s', ip, '-j', 'DROP'], 
+                             shell=False, capture_output=True)
+                if self.active_defense_mgr:
+                    self.active_defense_mgr.remove_rule_by_target('rate_limit', ip)
+                print(f"{Fore.YELLOW}[*] IP {ip} bant genişliği kısıtlaması kaldırıldı (INPUT+FORWARD).{Style.RESET_ALL}")
+                # Intercept'i durdur (eğer başka bir sebeple (örn: tarpit) izlenmiyorsa)
+                self.stop_intercept_ip(ip)
+                return True
+            except Exception as e:
+                print(f"{Fore.RED}[!] Unrate limit hatası: {e}{Style.RESET_ALL}")
+                return False
+
+    def kill_session_hardware(self, ip):
+        """TCP oturumlarını donanımsal (iptables) TCP RST enjeksiyonuyla milisaniyeler içinde düşürür."""
+        if not self._check_root():
+            return False
+            
+        print(f"{Fore.CYAN}[*] ⚡ MOBİL TCP RST ENJEKSİYONU BAŞLATILDI: {ip}{Style.RESET_ALL}")
+        
+        try:
+            # Hem Upload hem Download yönündeki tüm TCP paketlerine RST bas (Oturumu kır)
+            subprocess.run(['iptables', '-I', 'FORWARD', '-p', 'tcp', '-s', ip, '-j', 'REJECT', '--reject-with', 'tcp-reset'], 
+                         shell=False, capture_output=True)
+            subprocess.run(['iptables', '-I', 'FORWARD', '-p', 'tcp', '-d', ip, '-j', 'REJECT', '--reject-with', 'tcp-reset'], 
+                         shell=False, capture_output=True)
+            
+            # Cihazın oturumları algılayıp kapatması için 2 saniye bekle
+            time.sleep(2)
+            
+            # Kuralı kaldır
+            subprocess.run(['iptables', '-D', 'FORWARD', '-p', 'tcp', '-s', ip, '-j', 'REJECT', '--reject-with', 'tcp-reset'], 
+                         shell=False, capture_output=True)
+            subprocess.run(['iptables', '-D', 'FORWARD', '-p', 'tcp', '-d', ip, '-j', 'REJECT', '--reject-with', 'tcp-reset'], 
+                         shell=False, capture_output=True)
+            
+            print(f"{Fore.GREEN}[+] ⚡ TCP RST BAŞARILI: {ip} oturumları düşürüldü.{Style.RESET_ALL}")
+            return True
+        except Exception as e:
+            print(f"{Fore.RED}[!] TCP RST Hatası: {e}{Style.RESET_ALL}")
+            return False
 
     def unblock_mac(self, mac):
         """MAC engelini kaldırır ve ARP izolasyonunu durdurur."""
@@ -372,6 +592,8 @@ class Blocker:
                     subprocess.run(['ipset', 'del', self.SET_NAME, ip, '-exist'], shell=False, capture_output=True)
                 if hasattr(self.db, 'remove_ban'):
                     self.db.remove_ban(mac=mac)
+                if self.active_defense_mgr:
+                    self.active_defense_mgr.remove_rule_by_target('block_mac', mac)
                     
                 # ARP tablosunu düzelt (kurbanın ağa geri dönmesini sağla)
                 if ip and self._scapy_available and self.gateway_mac:
@@ -403,6 +625,20 @@ class Blocker:
             self.unblock_ip(ip)
         for mac in macs_to_unblock:
             self.unblock_mac(mac)
+
+    def cleanup_all(self):
+        """Aktif savunma sırasında eklenmiş tüm iptables kurallarını ve kayıtları temizler."""
+        if not self._check_root():
+            return
+            
+        print(f"{Fore.YELLOW}[!] Tüm engelleme ve aktif savunma kuralları sıfırlanıyor...{Style.RESET_ALL}")
+        self.unblock_all()
+        
+        # iptables kurallarını tamamen temizle (dsips spesifik)
+        subprocess.run(['iptables', '-D', 'INPUT', '-m', 'set', '--match-set', self.SET_NAME, 'src', '-j', 'DROP'], shell=False, capture_output=True)
+        subprocess.run(['iptables', '-D', 'FORWARD', '-m', 'set', '--match-set', self.SET_NAME, 'src', '-j', 'DROP'], shell=False, capture_output=True)
+        subprocess.run(['ipset', 'flush', self.SET_NAME], shell=False, capture_output=True)
+        print(f"{Fore.GREEN}[+] Aktif savunma iptables temizliği tamamlandı.{Style.RESET_ALL}")
 
     def get_blocked_hosts(self) -> dict:
         """Şu anda izole edilmiş ve engellenmiş cihazları döner."""
@@ -443,13 +679,14 @@ class Blocker:
                 time.sleep(2)
                 continue
                 
-            if not self.blocked_macs:
+            if not self.blocked_macs and not self.intercepted_macs:
                 time.sleep(1)
                 continue
                 
             try:
                 with self.lock:
-                    macs_to_poison = list(self.blocked_macs)
+                    # Hem tam izolasyon (Drop) hem de Intercept listesindeki cihazları zehirle
+                    macs_to_poison = list(self.blocked_macs | self.intercepted_macs)
                     ip_mac_snapshot = dict(self.ip_mac_map)
                     
                 for target_mac in macs_to_poison:
@@ -500,14 +737,14 @@ class Blocker:
                         # Tüm ağa: "Gateway'in MAC'i benim" diye broadcast ARP at
                         # Bu, kurbanın ARP cache timeout'unu sıfırlar
                         # ═══════════════════════════════════════════
-                        broadcast_poison = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(
-                            op=2,
-                            pdst=victim_ip,
-                            hwdst="ff:ff:ff:ff:ff:ff",
-                            psrc=self.gateway_ip,
-                            hwsrc=my_mac
-                        )
-                        sendp(broadcast_poison, iface=self.interface, verbose=False)
+                        # broadcast_poison = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(
+                        #     op=2,
+                        #     pdst=victim_ip,
+                        #     hwdst="ff:ff:ff:ff:ff:ff",
+                        #     psrc=self.gateway_ip,
+                        #     hwsrc=my_mac
+                        # )
+                        # sendp(broadcast_poison, iface=self.interface, verbose=False)
                         
                     except Exception:
                         pass

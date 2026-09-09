@@ -23,6 +23,7 @@ class ARPDetector:
         self.blocker = blocker
         self.auto_ban = auto_ban
         self.ip_mac_table = defaultdict(set)
+        self.real_mac_table = {}
         self.arp_request_count = defaultdict(int)
         self.arp_reply_count = defaultdict(int)
         self.gratuitous_arp_count = defaultdict(int)
@@ -100,7 +101,7 @@ class ARPDetector:
                 try:
                     from scapy.all import sendp
                     # Bilinen ilk MAC adresini doğru kabul ediyoruz (Real MAC)
-                    real_mac = list(self.ip_mac_table[sender_ip])[0]
+                    real_mac = self.real_mac_table.get(sender_ip, list(self.ip_mac_table[sender_ip])[0])
                     correct_arp = Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(
                         op=2, 
                         pdst="255.255.255.255", # Broadcast IP
@@ -118,10 +119,10 @@ class ARPDetector:
                 except Exception as e:
                     print(f"Anti-MITM Healing hatası: {e}")
                 # -------------------------------------------------------------
-                
-                self.ip_mac_table[sender_ip].add(sender_mac)
         else:
             self.ip_mac_table[sender_ip].add(sender_mac)
+            if sender_ip not in self.real_mac_table:
+                self.real_mac_table[sender_ip] = sender_mac
 
     def _check_gratuitous_arp(self, packet):
         """Gratuitous ARP tespiti."""

@@ -58,6 +58,17 @@ class DPIDetector:
             print(f"YARA derleme hatası: {e}")
             self.yara_compiled = None
 
+    def _trigger_alert(self, packet, src_ip, dst_ip, description):
+        self.db.add_alert(
+            alert_type='DPI: YARA Match',
+            src_ip=src_ip, src_mac=packet.src if hasattr(packet, 'src') else 'N/A',
+            dst_ip=dst_ip, dst_mac=packet.dst if hasattr(packet, 'dst') else 'N/A',
+            description=description,
+            severity='critical'
+        )
+        if self.blocker and self.auto_ban:
+            self.blocker.block_ip(src_ip)
+
     def analyze(self, packet):
         """TCP paketlerinin payload (veri) kısımlarını derinlemesine inceler."""
         if packet.haslayer(IP) and packet.haslayer(TCP) and packet.haslayer(Raw):

@@ -1,0 +1,13 @@
+- [x] `responder/blocker.py` Güncellemesi
+  - [x] `rate_limit_ip` ve `unrate_limit_ip` metodlarına katı çift yönlü sınır eklenmesi (UDP/QUIC dahil tüm protokoller için limit 1/s).
+  - [x] `kill_session_hardware` fonksiyonunun eklenmesi (iptables REJECT ile anlık RST).
+- [x] `modules/dns_sinkhole.py` Güncellemesi
+  - [x] Android ve iOS Captive Portal HTTP rotalarının (`/generate_204`, `/hotspot-detect.html`, vb.) eklenmesi.
+  - [x] `redirect_to_quarantine` içerisine DoT (853) ve QUIC (UDP 443) DROP/REJECT kurallarının eklenmesi.
+  - [x] `remove_quarantine_redirect` içerisinde aynı kuralların temizlenmesi.
+- [x] `responder/tarpit.py` Güncellemesi
+  - [x] `_tarpit_client` döngüsünün Keep-Alive gönderecek şekilde revize edilmesi.
+- [x] `web/app.py` Güncellemesi
+  - [x] `/api/active_defense` içindeki `tcp_reset` çağrısının `kill_session_hardware` olarak değiştirilmesi.
+- [x] Doğrulama ve Yeniden Başlatma
+  - [x] `start_prod.sh` çalıştırılması.
