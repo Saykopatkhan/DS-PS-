@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py312"
+exclude = [".venv", "web/static"]
+
+[tool.ruff.lint]
+select = ["E9", "F"]

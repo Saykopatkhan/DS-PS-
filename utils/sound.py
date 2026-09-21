@@ -12,19 +12,20 @@ class SoundAlert:
     """
     Saldırı anında veya ban atıldığında espeak ile sesli uyarı verir.
     """
-    _last_play_time = 0
+    _lock = threading.Lock()
+    _last_play_time = float("-inf")
     _cooldown = 4.0  # Aynı anda üst üste ses gelmemesi için 4 saniye bekleme süresi
 
     @staticmethod
     def play(message, lang='tr'):
         """Sesli mesajı arka planda okur (Spam korumalı)."""
         import time
-        current_time = time.time()
+        current_time = time.monotonic()
         # Eğer son sesin üzerinden bekleme süresi (cooldown) geçmediyse sesi yut, konuşma.
-        if current_time - SoundAlert._last_play_time < SoundAlert._cooldown:
-            return
-            
-        SoundAlert._last_play_time = current_time
+        with SoundAlert._lock:
+            if current_time - SoundAlert._last_play_time < SoundAlert._cooldown:
+                return
+            SoundAlert._last_play_time = current_time
         def _speak():
             try:
                 # espeak komutunu kullanarak sesi üret
@@ -32,7 +33,7 @@ class SoundAlert:
                 # -s 140 : Hız
                 subprocess.run(['espeak', '-v', lang, '-s', '140', message], 
                                stdout=subprocess.DEVNULL, 
-                               stderr=subprocess.DEVNULL)
+                               stderr=subprocess.DEVNULL, timeout=15)
             except Exception:
                 pass
         

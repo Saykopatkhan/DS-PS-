@@ -30,6 +30,12 @@ class VendorLookup:
         if not mac_address or mac_address == "N/A" or mac_address == "ff:ff:ff:ff:ff:ff":
             return "Bilinmiyor"
 
+        if not isinstance(mac_address, str) or not re.fullmatch(r'(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}', mac_address):
+            return 'Bilinmiyor'
+        # Multicast and locally administered MACs have no reliable vendor OUI.
+        if int(mac_address[:2], 16) & 3:
+            return 'Bilinmiyor'
+
         # OUI (ilk 3 oktet) kontrolü
         prefix = mac_address.lower()[:8]
         if prefix in VendorLookup.COMMON_VENDORS:

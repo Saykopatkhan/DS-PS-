@@ -24,19 +24,10 @@ class C2BeaconingDetector:
         self.blocker = blocker
         self.auto_ban = auto_ban
         
-        self.whitelist = [
-            ipaddress.ip_network(n) for n in [
-                '172.217.0.0/16', '142.250.0.0/15', '142.251.0.0/16', '173.194.0.0/16', '74.125.0.0/16', '216.58.0.0/16',
-                '34.0.0.0/8', '35.0.0.0/8',
-                '140.82.112.0/20', '185.199.108.0/22',
-                '13.0.0.0/8', '20.0.0.0/8', '40.0.0.0/8', '52.0.0.0/8', '104.208.0.0/13',
-                '104.16.0.0/12', '1.1.1.0/24',
-                '54.0.0.0/8',
-                '192.168.0.0/16', '10.0.0.0/8', '172.16.0.0/12', '127.0.0.0/8',
-                '8.8.8.8/32', '8.8.4.4/32', '1.1.1.1/32', '1.0.0.1/32'
-            ]
-        ]
-        
+        # Cloud provider ownership does not make a destination trustworthy.
+        self.whitelist = [ipaddress.ip_network(address) for address in
+                          ('8.8.8.8/32', '8.8.4.4/32', '1.1.1.1/32', '1.0.0.1/32')]
+
         # Bağlantı zamanları: {(src, dst, dport): [timestamp1, timestamp2, ...]}
         self.conn_times = defaultdict(list)
         
@@ -51,12 +42,12 @@ class C2BeaconingDetector:
                 dst_ip = packet[IP].dst
                 
                 try:
-                    src_addr = ipaddress.ip_address(src_ip)
+                    ipaddress.ip_address(src_ip)
                     dst_addr = ipaddress.ip_address(dst_ip)
-                    if any(src_addr in net for net in self.whitelist) or any(dst_addr in net for net in self.whitelist):
+                    if not dst_addr.is_global or any(dst_addr in net for net in self.whitelist):
                         return
                 except ValueError:
-                    pass
+                    return
                 
                 if packet.haslayer(TCP):
                     dport = packet[TCP].dport
@@ -70,6 +61,8 @@ class C2BeaconingDetector:
                 if now - self.last_cleanup > 60:
                     self._cleanup(now)
                     
+                if key not in self.conn_times and len(self.conn_times) >= 10000:
+                    self.conn_times.pop(next(iter(self.conn_times)))
                 times = self.conn_times[key]
                 
                 # Aynı saniye içindeki paket yığınlarını (burst/stream) tek bir olay say
@@ -110,7 +103,7 @@ class C2BeaconingDetector:
         """10 dakikadan eski verileri hafızadan temizler."""
         keys_to_delete = []
         for k, v in self.conn_times.items():
-            if v and (now - v[-1]) > 600:
+            if not v or (now - v[-1]) > 600:
                 keys_to_delete.append(k)
         for k in keys_to_delete:
             del self.conn_times[k]

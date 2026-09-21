@@ -46,12 +46,12 @@ class WAFDetector:
                     payload = packet[Raw].load.decode('utf-8', errors='ignore')
                     
                     # 1. HTTP İstek Sayacı (L7 DoS Tespiti)
-                    if payload.startswith("GET ") or payload.startswith("POST ") or payload.startswith("HEAD "):
+                    if dst_port in [80, 8080] and payload.split(" ", 1)[0] in {"GET", "POST", "HEAD", "PUT", "DELETE", "PATCH", "OPTIONS"}:
                         self.http_requests[src_ip].append(time.time())
                         self._check_l7_dos(src_ip)
                         
                     # 2. HTTP 404 Hata Sayacı (Dizin Kaba Kuvveti Tespiti)
-                    if "HTTP/1.1 404" in payload or "HTTP/1.0 404" in payload:
+                    if src_port in [80, 8080] and payload.startswith(("HTTP/1.1 404 ", "HTTP/1.0 404 ")):
                         # Sunucu cevap veriyorsa, hedeften kaynağa dönen bir cevaptır
                         # Bu yüzden saldıran kişi dst_ip olur.
                         attacker_ip = dst_ip 

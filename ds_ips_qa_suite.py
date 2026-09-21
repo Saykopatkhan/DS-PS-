@@ -3,10 +3,30 @@ import socket
 import requests
 import time
 import sys
-import struct
+import re
 from colorama import init, Fore, Style
 
 init(autoreset=True)
+
+
+def probe_login_rate_limit(base_url):
+    """Return True only for an observed HTTP 429 after valid-CSRF failures."""
+    with requests.Session() as client:
+        login = client.get(f'{base_url}/login', timeout=3)
+        login.raise_for_status()
+        match = re.search(r'name="csrf_token"\s+value="([^"]+)"', login.text)
+        if not match:
+            raise ValueError('Giriş formunda CSRF alanı bulunamadı')
+        for attempt in range(6):
+            response = client.post(f'{base_url}/login', data={
+                'username': 'admin', 'password': f'invalid-qa-password-{attempt}',
+                'csrf_token': match.group(1),
+            }, timeout=3, allow_redirects=False)
+            if response.status_code == 429:
+                return True
+            if response.status_code != 401:
+                raise ValueError(f'Beklenmeyen HTTP {response.status_code}; hız sınırı doğrulanamadı')
+    return False
 
 class DSIPS_QASuite:
     def __init__(self, target_ip, web_port=5000):
@@ -47,23 +67,18 @@ class DSIPS_QASuite:
         try:
             for p in payloads:
                 requests.get(f"{self.base_url}/?{p}", timeout=3)
-            self.log_result(test_name, "TETİKLENDİ", "Zararlı payloadlar gönderildi (Panelin engellemesi beklenir)")
-        except requests.exceptions.RequestException as e:
-            self.log_result(test_name, "TETİKLENDİ", "WAF bağlantıyı kesti veya reddetti")
+            self.log_result(test_name, "GÖNDERİLDİ", "Payloadlar gönderildi; tespit için sunucu alarmları doğrulanmalı")
+        except requests.exceptions.RequestException:
+            self.log_result(test_name, "DOĞRULANAMADI", "Bağlantı hatası WAF engellemesinin kanıtı değildir")
 
     def test_bruteforce_defense(self):
-        test_name = "1. Self-Defense: Brute-Force Koruması"
+        test_name = "Login: Hız Sınırı"
         try:
-            for i in range(6):
-                resp = requests.post(f"{self.base_url}/login", data={'username':'admin', 'password':f'bad{i}'}, timeout=3)
-                if resp.status_code == 403 or "Engellendi" in resp.text:
-                    self.log_result(test_name, "TETİKLENDİ", f"{i+1}. denemede IP engellendi (HTTP 403)")
-                    return
-            self.log_result(test_name, "BAŞARISIZ", "6 hatalı denemeye rağmen banlanmadı")
-        except requests.exceptions.ConnectionError:
-            self.log_result(test_name, "TETİKLENDİ", "Bağlantı seviyesinde (Firewall) banlandı")
-        except Exception as e:
-            self.log_result(test_name, "YANIT YOK", str(e))
+            limited = probe_login_rate_limit(self.base_url)
+            self.log_result(test_name, "BAŞARILI" if limited else "BAŞARISIZ",
+                            "HTTP 429 gözlendi" if limited else "6 denemede HTTP 429 gözlenmedi")
+        except (requests.RequestException, ValueError) as exc:
+            self.log_result(test_name, "DOĞRULANAMADI", str(exc))
 
     def test_honeypot(self):
         test_name = "2. Honeypot Servis Tespiti"
@@ -118,7 +133,7 @@ class DSIPS_QASuite:
                 s.settimeout(0.1)
                 s.connect_ex((self.target_ip, port))
                 s.close()
-            self.log_result(test_name, "BAŞARILI", "15 Porta tarama paketi gönderildi (Alarm bekleniyor)")
+            self.log_result(test_name, "GÖNDERİLDİ", "15 porta bağlantı denendi; alarm doğrulanmadı")
         except Exception as e:
             self.log_result(test_name, "BAŞARISIZ", str(e))
 
@@ -136,13 +151,13 @@ class DSIPS_QASuite:
             data = s.recv(10)
             elapsed = time.time() - start_time
             
-            if elapsed > 2.0:
+            if data and elapsed > 2.0:
                 self.log_result(test_name, "TETİKLENDİ", f"Aşırı yavaş yanıt tespit edildi! (Süre: {elapsed:.2f}s)")
             else:
                 self.log_result(test_name, "BAŞARISIZ", "Normal hızda yanıt alındı (Tarpit aktif edilmemiş olabilir)")
             s.close()
         except socket.timeout:
-            self.log_result(test_name, "TETİKLENDİ", "Bağlantı açık ama veri gelmiyor (Sıfır TCP Penceresi - Tam Tarpit)")
+            self.log_result(test_name, "DOĞRULANAMADI", "Zaman aşımı; tek başına Tarpit kanıtı değildir")
         except ConnectionRefusedError:
             self.log_result(test_name, "YANIT YOK", "Port kapalı (Tarpit yönlendirmesi çalışmadı)")
         except Exception as e:

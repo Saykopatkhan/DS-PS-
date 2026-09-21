@@ -1,178 +1,161 @@
-# ========================================================================
-# DS-IPS (Premium SOC Edition)
-# Bu proje Kadir Kırmacı'ya aittir. 
-# Copyright (c) 2026 Kadir Kırmacı. All Rights Reserved.
-# Ticari kullanımı ve tersine mühendislik yapılması kesinlikle yasaktır.
-# ========================================================================
-
-"""
-TCP Tarpit (Kaynak Tüketim Tuzağı) Modülü.
-Saldırganların tarama ve DoS isteklerini aşırı yavaş yanıtlayarak
-bağlantı ve thread kaynaklarını kilitler.
-"""
-
-import socket
-import threading
-import subprocess
-import time
-import logging
 import ipaddress
+import logging
+import socket
+import subprocess
+import threading
 
-logger = logging.getLogger("DSIPS_Tarpit")
-
+logger = logging.getLogger('DSIPS_Tarpit')
 MAX_TARPIT_IPS = 100
 MAX_CONNECTIONS = 500
 
+
 class TCPTarpit:
-    def __init__(self, port=9999, db=None, blocker=None):
-        self.port = port
-        self.db = db
-        self.blocker = blocker
+    def __init__(self, port=9999, db=None, blocker=None, dry_run=False):
+        self.port = int(port)
+        if not 1 <= self.port <= 65535:
+            raise ValueError('Geçersiz port')
+        self.db, self.blocker, self.dry_run = db, blocker, dry_run
         self.running = False
         self.server_socket = None
         self.trapped_ips = set()
         self.total_trapped_connections = 0
-        self.lock = threading.Lock()
+        self.active_connections = set()
+        self.lock = threading.RLock()
+        self._stop_event = threading.Event()
+        self._thread = None
+        self._owned_rules = {}
 
     def start(self):
-        """Tarpit dinleme soketini ve arka plan thread'ini başlatır."""
-        self.running = True
+        if self.dry_run or (self.blocker and self.blocker.dry_run):
+            return False
+        if self.running:
+            return True
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind(('0.0.0.0', self.port))
             self.server_socket.listen(100)
-            
-            t = threading.Thread(target=self._listen_loop, daemon=True)
-            t.start()
-            logger.info(f"[+] TCP Tarpit daemon port {self.port} üzerinde aktif.")
-        except Exception as e:
-            logger.error(f"[!] TCP Tarpit başlatılamadı: {e}")
+            self.server_socket.settimeout(1)
+            self._stop_event.clear()
+            self.running = True
+            self._thread = threading.Thread(target=self._listen_loop, daemon=True)
+            self._thread.start()
+            return True
+        except OSError:
+            logger.exception('TCP Tarpit başlatılamadı')
+            self.running = False
+            if self.server_socket:
+                self.server_socket.close()
+                self.server_socket = None
+            return False
 
     def _listen_loop(self):
         while self.running:
             try:
-                self.server_socket.settimeout(1.0)
                 conn, addr = self.server_socket.accept()
-                ip = addr[0]
-                
                 with self.lock:
-                    if self.total_trapped_connections >= MAX_CONNECTIONS:
+                    if len(self.active_connections) >= MAX_CONNECTIONS:
                         conn.close()
                         continue
-                    
-                    self.trapped_ips.add(ip)
+                    self.active_connections.add(conn)
                     self.total_trapped_connections += 1
-                
-                # Her istemciyi ayrı bir kilitçi thread'de yavaşlat
-                t = threading.Thread(target=self._tarpit_client, args=(conn, ip), daemon=True)
-                t.start()
+                threading.Thread(target=self._tarpit_client, args=(conn, addr[0]), daemon=True).start()
             except socket.timeout:
                 continue
-            except Exception as e:
-                if self.running:
-                    logger.debug(f"Tarpit listen error: {e}")
+            except OSError:
                 break
 
     def _tarpit_client(self, conn, ip):
-        """Saldırgan bağlantısını açıp aşırı yavaş veri göndererek soketini kilitler."""
         try:
+            conn.settimeout(1)
             conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1)
-            # QA testi ve gerçek tarpit senaryosu için ilk byte'ı göndermeden önce mutlaka beklet!
-            time.sleep(2)
-            # Pencere boyutunu en aza indir (Zero-Window Trap)
+            if self._stop_event.wait(2):
+                return
             while self.running:
-                # 3 saniyede 1 tek bayt gönder (Mobil Keep-Alive kandırmacası)
-                conn.send(b"\x00")
-                time.sleep(3)
-        except Exception:
+                conn.sendall(b'\x00')
+                if self._stop_event.wait(3):
+                    break
+        except OSError:
             pass
         finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
+            conn.close()
+            with self.lock:
+                self.active_connections.discard(conn)
+
+    def _rules(self, ip):
+        return [
+            (['-t', 'nat'], ['PREROUTING', '-p', 'tcp', '-s', ip, '-m', 'comment', '--comment', 'dsips-tarpit', '-j', 'REDIRECT', '--to-ports', str(self.port)]),
+            ([], ['FORWARD', '-s', ip, '-p', 'tcp', '-m', 'comment', '--comment', 'dsips-tarpit', '-j', 'REJECT', '--reject-with', 'tcp-reset']),
+        ]
 
     def tarpit_ip(self, ip):
-        """Saldırgan IP adresinin tüm TCP trafiğini Tarpit portuna (9999) yönlendirir.
-        Hem direkt saldırılarda (PREROUTING) hem de ağ geçidi modunda (FORWARD) çalışır."""
-        
-        # Whitelist Kontrolü
-        if ip in {'127.0.0.1', '0.0.0.0', '::1'} or (self.blocker and ip in self.blocker.whitelist):
-            logger.warning(f"[!] Whitelist ihlali girişimi: {ip} Tarpit'e ALINAMAZ!")
+        address = ipaddress.IPv4Address(ip)
+        ip = str(address)
+        if (address.is_loopback or address.is_unspecified or address.is_multicast
+                or (self.blocker and ip in self.blocker.whitelist)):
             return False
-            
+        if self.dry_run or (self.blocker and self.blocker.dry_run) or not self.running:
+            return False
         with self.lock:
+            if ip in self.trapped_ips:
+                return True
             if len(self.trapped_ips) >= MAX_TARPIT_IPS:
-                logger.warning(f"[!] Tarpit havuzu dolu ({MAX_TARPIT_IPS}). Yeni IP {ip} eklenemiyor (Conntrack DoS Koruması).")
+                return False
+            added = []
+            try:
+                for table, rule in self._rules(ip):
+                    result = subprocess.run(['iptables', *table, '-C', *rule], capture_output=True, timeout=5)
+                    if result.returncode == 1:
+                        subprocess.run(['iptables', *table, '-I', *rule], capture_output=True, check=True, timeout=5)
+                        added.append((table, rule))
+                    elif result.returncode != 0:
+                        raise subprocess.CalledProcessError(result.returncode, result.args)
+                self._owned_rules[ip] = added
+                self.trapped_ips.add(ip)
+                return True
+            except (OSError, subprocess.SubprocessError):
+                logger.exception('Tarpit yönlendirme hatası')
+                for table, rule in reversed(added):
+                    try:
+                        subprocess.run(['iptables', *table, '-D', *rule], capture_output=True, check=True, timeout=5)
+                    except (OSError, subprocess.SubprocessError):
+                        logger.exception('Tarpit rollback failed')
                 return False
 
-        try:
-            # Command Injection önlemi için geçerli bir IP mi kontrol et
-            ipaddress.ip_address(ip)
-            rules_added = 0
-            
-            # Kural 1: PREROUTING - Saldırganın TCP trafiğini tarpit portuna yönlendir
-            check_cmd = ["iptables", "-t", "nat", "-C", "PREROUTING", "-p", "tcp", "-s", ip, "-j", "REDIRECT", "--to-ports", str(self.port)]
-            res = subprocess.run(check_cmd, capture_output=True)
-            if res.returncode != 0:
-                cmd = ["iptables", "-t", "nat", "-A", "PREROUTING", "-p", "tcp", "-s", ip, "-j", "REDIRECT", "--to-ports", str(self.port)]
-                subprocess.run(cmd, check=True, capture_output=True)
-                rules_added += 1
-            
-            # Kural 2: FORWARD zincirinde saldırganın çıkış trafiğini engelle (Gateway Modu)
-            check_cmd2 = ["iptables", "-C", "FORWARD", "-s", ip, "-p", "tcp", "-j", "REJECT", "--reject-with", "tcp-reset"]
-            res2 = subprocess.run(check_cmd2, capture_output=True)
-            if res2.returncode != 0:
-                cmd2 = ["iptables", "-I", "FORWARD", "-s", ip, "-p", "tcp", "-j", "REJECT", "--reject-with", "tcp-reset"]
-                subprocess.run(cmd2, check=True, capture_output=True)
-                rules_added += 1
-            
-            logger.info(f"[+] IP {ip} Tarpit tuzağına aktarıldı (Port {self.port}, {rules_added} kural eklendi).")
-            with self.lock:
-                self.trapped_ips.add(ip)
-            if self.db:
-                self.db.add_alert(
-                    alert_type="🪤 Tarpit Kaynak Tuzağı Uygulandı",
-                    src_ip=ip, src_mac="N/A", dst_ip="N/A", dst_mac="N/A",
-                    description=f"Saldırgan IP {ip} TCP Tarpit tuzağına aktarıldı. Tüm TCP bağlantıları kilitleniyor.",
-                    severity="high"
-                )
-            return True
-        except Exception as e:
-            logger.error(f"[!] Tarpit yönlendirme hatası ({ip}): {e}")
-        return False
-
     def untarpit_ip(self, ip):
-        """IP üzerindeki Tarpit yönlendirmesini kaldırır (tüm zincirlerden)."""
-        try:
-            ipaddress.ip_address(ip) # Validate IP
-            # PREROUTING kuralını kaldır
-            subprocess.run(["iptables", "-t", "nat", "-D", "PREROUTING", "-p", "tcp", "-s", ip, "-j", "REDIRECT", "--to-ports", str(self.port)],
-                         capture_output=True)
-            # FORWARD kuralını kaldır
-            subprocess.run(["iptables", "-D", "FORWARD", "-s", ip, "-p", "tcp", "-j", "REJECT", "--reject-with", "tcp-reset"],
-                         capture_output=True)
-            with self.lock:
-                self.trapped_ips.discard(ip)
-            logger.info(f"[-] IP {ip} Tarpit tuzağından çıkarıldı.")
+        ip = str(ipaddress.IPv4Address(ip))
+        if self.dry_run or (self.blocker and self.blocker.dry_run):
+            return False
+        with self.lock:
+            rules = self._owned_rules.get(ip, [])
+            for table, rule in list(reversed(rules)):
+                try:
+                    subprocess.run(['iptables', *table, '-D', *rule], capture_output=True, check=True, timeout=5)
+                    rules.remove((table, rule))
+                except (OSError, subprocess.SubprocessError):
+                    logger.exception('Untarpit failed')
+                    return False
+            self._owned_rules.pop(ip, None)
+            self.trapped_ips.discard(ip)
             return True
-        except Exception as e:
-            logger.error(f"[!] Untarpit hatası ({ip}): {e}")
-        return False
 
     def get_stats(self):
         with self.lock:
-            return {
-                "active_tarpit_ips": list(self.trapped_ips),
-                "total_trapped_connections": self.total_trapped_connections,
-                "tarpit_count": len(self.trapped_ips)
-            }
+            return {'active_tarpit_ips': sorted(self.trapped_ips),
+                    'total_trapped_connections': self.total_trapped_connections,
+                    'active_connections': len(self.active_connections),
+                    'tarpit_count': len(self.trapped_ips)}
 
     def stop(self):
         self.running = False
+        self._stop_event.set()
         if self.server_socket:
-            try:
-                self.server_socket.close()
-            except Exception:
-                pass
+            self.server_socket.close()
+        with self.lock:
+            for conn in tuple(self.active_connections):
+                conn.close()
+            self.active_connections.clear()
+            for ip in tuple(self.trapped_ips):
+                self.untarpit_ip(ip)
+        if self._thread and self._thread is not threading.current_thread():
+            self._thread.join(timeout=2)

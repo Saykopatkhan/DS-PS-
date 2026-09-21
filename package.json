@@ -1,0 +1,18 @@
+{
+  "name": "ds-ips-interface",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Locally served, pinned motion libraries for the Flask interface",
+  "scripts": {
+    "vendor": "node scripts/vendor_frontend.mjs",
+    "check": "node --check web/static/ui.js && node --check web/static/app.js && node --check web/static/premium.js",
+    "format:check": "prettier --check web/static/style.css web/static/ui.js web/static/app.js web/static/premium.js scripts/vendor_frontend.mjs package.json"
+  },
+  "dependencies": {
+    "animejs": "4.5.0",
+    "lenis": "1.3.26"
+  },
+  "devDependencies": {
+    "prettier": "3.6.2"
+  }
+}

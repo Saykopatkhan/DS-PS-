@@ -1,0 +1,3 @@
+# Optional malware signatures and remote management integrations.
+yara-python>=4.5,<5
+python-telegram-bot>=22,<23

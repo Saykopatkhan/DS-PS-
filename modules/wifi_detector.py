@@ -10,7 +10,7 @@ WiFi atak tespit modülü (Deauth, Beacon Flood, Evil Twin).
 """
 import time
 from collections import defaultdict
-from scapy.all import Dot11, Dot11Deauth, Dot11Beacon, Dot11Elt, RadioTap
+from scapy.all import Dot11, Dot11Elt
 from core.database import Database
 
 class WiFiDetector:
@@ -55,7 +55,7 @@ class WiFiDetector:
             src_mac = packet.addr2
             self.deauth_count[src_mac] += 1
             
-            if self.deauth_count[src_mac] > self.deauth_threshold:
+            if src_mac and self.deauth_count[src_mac] == self.deauth_threshold + 1:
                 self.db.add_alert(
                     alert_type='Deauth Saldırısı',
                     src_ip='N/A', src_mac=src_mac,
@@ -78,7 +78,7 @@ class WiFiDetector:
                 ssid = packet[Dot11Elt].info.decode('utf-8', errors='ignore')
                 self.unique_ssids_in_window.add(ssid)
                 
-                if len(self.unique_ssids_in_window) > self.beacon_flood_threshold:
+                if len(self.unique_ssids_in_window) == self.beacon_flood_threshold + 1:
                     self.db.add_alert(
                         alert_type='Beacon Flood',
                         src_ip='N/A', src_mac=bssid if bssid else 'N/A',
@@ -97,6 +97,8 @@ class WiFiDetector:
                 bssid = packet.addr3
                 
                 if ssid and bssid:
+                    if bssid in self.ssid_bssid_map[ssid]:
+                        return
                     self.ssid_bssid_map[ssid].add(bssid)
                     
                     if len(self.ssid_bssid_map[ssid]) > 1:
@@ -105,8 +107,8 @@ class WiFiDetector:
                             alert_type='Evil Twin',
                             src_ip='N/A', src_mac=bssid,
                             dst_ip='N/A', dst_mac='ff:ff:ff:ff:ff:ff',
-                            description=f"SSID '{ssid}' için çoklu BSSID tespit edildi: {bssids}",
-                            severity='critical'
+                            description=f"SSID '{ssid}' için çoklu BSSID (mesh/çoklu AP olabilir): {bssids}",
+                            severity='warning'
                         )
         except Exception:
             pass
@@ -116,6 +118,7 @@ class WiFiDetector:
         if time.time() - self.last_reset > self.detection_window:
             self.deauth_count.clear()
             self.beacon_count.clear()
+            self.ssid_bssid_map.clear()
             self.unique_ssids_in_window.clear()
             self.last_reset = time.time()
 

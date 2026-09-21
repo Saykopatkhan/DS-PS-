@@ -30,24 +30,35 @@ class ARPDetector:
         self.detection_window = 10.0
         self.arp_threshold = 30
         self.last_reset = time.time()
+        self._local_macs = self._get_local_macs()
+        self._local_ips = self._get_local_ips()
+        self._last_spoof_alert = {}
 
     def analyze(self, packet):
         """ARP paketlerini analiz eder."""
         if packet.haslayer(ARP):
+            now = time.time()
+            if now - self.last_reset > self.detection_window:
+                self.arp_request_count.clear()
+                self.arp_reply_count.clear()
+                self.gratuitous_arp_count.clear()
+                self.last_reset = now
             sender_ip = packet[ARP].psrc
             sender_mac = packet[ARP].hwsrc
+            if not isinstance(sender_mac, str) or sender_ip == '0.0.0.0':
+                return
             
             # ARP op == 1 (request)
             if packet[ARP].op == 1:
                 self.arp_request_count[sender_ip] += 1
-                self._check_arp_flood()
+                self._check_arp_flood(sender_ip)
             
             # ARP op == 2 (reply)
             elif packet[ARP].op == 2:
                 self._detect_spoofing(packet)
                 self.arp_reply_count[sender_ip] += 1
                 self._check_gratuitous_arp(packet)
-                self._check_arp_flood()
+                self._check_arp_flood(sender_ip)
                 
             self.db.update_ip_mac(sender_ip, sender_mac)
 
@@ -76,11 +87,18 @@ class ARPDetector:
         # BEYAZ LİSTE (WHITELIST): Kendi IPS sistemimizin MAC'i mi?
         # Blocker modülünün attığı izolasyon paketlerini saldırı sanma.
         # -------------------------------------------------------------
-        if sender_mac.lower() in self._get_local_macs():
+        if sender_mac.lower() in self._local_macs:
             return
             
         if sender_ip in self.ip_mac_table:
             if sender_mac not in self.ip_mac_table[sender_ip]:
+                key = (sender_ip, sender_mac)
+                now = time.time()
+                if now - self._last_spoof_alert.get(key, float('-inf')) < self.detection_window:
+                    return
+                if len(self._last_spoof_alert) >= 10000:
+                    self._last_spoof_alert.clear()
+                self._last_spoof_alert[key] = now
                 known_macs = ', '.join(self.ip_mac_table[sender_ip])
                 self.db.add_alert(
                     alert_type='ARP Spoofing',
@@ -98,6 +116,8 @@ class ARPDetector:
                 # Kurban cihazların ARP tablolarını düzeltmek için ağa doğru 
                 # MAC adresiyle düzeltme paketleri yollar.
                 # -------------------------------------------------------------
+                if not (self.auto_ban and self.blocker and not getattr(self.blocker, 'dry_run', False)):
+                    return
                 try:
                     from scapy.all import sendp
                     # Bilinen ilk MAC adresini doğru kabul ediyoruz (Real MAC)
@@ -108,7 +128,7 @@ class ARPDetector:
                         psrc=sender_ip, 
                         hwsrc=real_mac
                     )
-                    sendp(correct_arp, count=5, verbose=False)
+                    sendp(correct_arp, count=5, verbose=False, iface=getattr(self.blocker, 'interface', None))
                     self.db.add_alert(
                         alert_type='Anti-MITM Healing',
                         src_ip='System', src_mac='N/A',
@@ -120,6 +140,10 @@ class ARPDetector:
                     print(f"Anti-MITM Healing hatası: {e}")
                 # -------------------------------------------------------------
         else:
+            if len(self.ip_mac_table) >= 10000:
+                old_ip = next(iter(self.ip_mac_table))
+                del self.ip_mac_table[old_ip]
+                self.real_mac_table.pop(old_ip, None)
             self.ip_mac_table[sender_ip].add(sender_mac)
             if sender_ip not in self.real_mac_table:
                 self.real_mac_table[sender_ip] = sender_mac
@@ -131,7 +155,7 @@ class ARPDetector:
         
         if sender_ip == target_ip:
             self.gratuitous_arp_count[sender_ip] += 1
-            if self.gratuitous_arp_count[sender_ip] > 5:
+            if self.gratuitous_arp_count[sender_ip] == 6:
                 self.db.add_alert(
                     alert_type='Gratuitous ARP',
                     src_ip=sender_ip, src_mac=packet[ARP].hwsrc,
@@ -148,29 +172,14 @@ class ARPDetector:
         except Exception:
             return ['127.0.0.1']
 
-    def _check_arp_flood(self):
-        """ARP Flood ve Sniffing tespiti."""
-        current_time = time.time()
-        if current_time - self.last_reset > self.detection_window:
-            local_ips = self._get_local_ips()
-            for ip in set(self.arp_request_count.keys()).union(set(self.arp_reply_count.keys())):
-                if ip in local_ips:
-                    continue # Sistemin kendi yaptığı meşru ağ taramalarını atla
-                    
-                total = self.arp_request_count[ip] + self.arp_reply_count[ip]
-                if total > self.arp_threshold:
-                    self.db.add_alert(
-                        alert_type='ARP Storm (DDoS)',
-                        src_ip=ip, src_mac='N/A',
-                        dst_ip='N/A', dst_mac='N/A',
-                        description=f'Kaynak {ip} - {total} ARP paketi / {self.detection_window}s pencerede',
-                        severity='high'
-                    )
-            
-            self.arp_request_count.clear()
-            self.arp_reply_count.clear()
-            self.gratuitous_arp_count.clear()
-            self.last_reset = current_time
+    def _check_arp_flood(self, sender_ip):
+        total = self.arp_request_count[sender_ip] + self.arp_reply_count[sender_ip]
+        if sender_ip not in self._local_ips and total == self.arp_threshold + 1:
+            self.db.add_alert(
+                alert_type='ARP Storm (DDoS)', src_ip=sender_ip, src_mac='N/A',
+                dst_ip='N/A', dst_mac='N/A',
+                description=f'Kaynak {sender_ip} - {total} ARP paketi / {self.detection_window}s pencerede',
+                severity='high')
 
     def get_stats(self) -> dict:
         """İstatistikleri döner."""

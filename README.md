@@ -1,111 +1,121 @@
-<h1 align="center">🛡️🇹🇷 DS-IPS (Intrusion Prevention System) - Premium SOC Edition</h1>
+# DS-IPS — Ağ Tespit ve Önleme Paneli
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Version-5.1-00e5ff.svg?style=for-the-badge&logo=appveyor" alt="Version">
-  <img src="https://img.shields.io/badge/Python-3.x-blue.svg?style=for-the-badge&logo=python" alt="Python">
-  <img src="https://img.shields.io/badge/License-Proprietary-red.svg?style=for-the-badge&logo=law" alt="License">
-  <img src="https://img.shields.io/badge/Security-Military_Grade-success.svg?style=for-the-badge&logo=security" alt="Security">
-</p>
+Python, Flask/Socket.IO, Scapy ve tshark tabanlı ağ izleme uygulaması. Web paneli; cihaz envanteri, alarm akışı, DNS/HTTP/TLS SNI gözlemleri ve elle yönetilen savunma işlemlerini bir araya getirir.
 
-<p align="center">
-  <strong>Gelişmiş Ağ Saldırı Tespit ve Önleme Sistemi & Siber Güvenlik Operasyon Merkezi (SOC)</strong><br>
-  Telif Hakkı (c) 2026 - Kadir Kırmacı
-</p>
+## Kurulum
 
----
+Linux ve Python 3.12+ kullanın. Python bağımlılıkları sürümleri sabitlenmiş `requirements.txt` dosyasındadır; isteğe bağlı YARA ve Telegram yönetim botu ayrı tutulur.
 
-## 🌟 Proje Özeti
-**DS-IPS**, yerel ağınızda (LAN) ve kablosuz ağınızda (Wi-Fi) meydana gelebilecek siber saldırıları, anormallikleri ve keşif (tarama) girişimlerini gerçek zamanlı olarak **tespit eden (IDS)** ve saldırganı ağdan tamamen **izole eden (IPS)** profesyonel bir güvenlik yazılımıdır. 
-
-Proje, yalnızca ağ paketlerini yakalamakla kalmaz, aynı zamanda sistem yöneticilerine **Premium Glassmorphism** tasarımlı, canlı bir Ağ Haritası (Live Topology) sunarak tüm ağı saniyeler içinde görselleştirir.
-
----
-
-## 🚀 Neler Yapabilir? (Temel Özellikler)
-
-### 🌟 Yeni Eklenen v5.1 Özellikleri (Tam Donanımlı Aktif Savunma)
-- **Mobil Uyumlu Donanımsal Savunma:** Android ve iOS cihazların modern atlatma yöntemlerine (QUIC, DoH, DoT, Keep-Alive kurnazlıkları) karşı donanımsal `iptables` destekli TCP RST enjeksiyonu ve çift yönlü bant genişliği boğma.
-- **Gelişmiş Captive Portal & DNS Sinkhole:** Karantinaya alınan cihazlar için HTTP/3 yasaklanır ve özel Captive Portal rotaları (`/hotspot-detect.html`, `/generate_204`) üzerinden mobil cihazlara anında "Ağa Giriş Yapın" ekranı fırlatılır.
-- **Keep-Alive Tarpit (Soket Kilitleme):** Saldırganları Tarpit (Bal Küpü) portuna hapsettiğinde, bağlantının kopmasını engellemek için 3 saniyede bir oltalama verisi göndererek saldırganın cihazını sonsuza kadar kilitler.
-- **Honeypot & Deception:** Açık Port (FTP, SSH, Telnet vb.) taramalarına karşı anında Sahte Banner (Fake Banner) dönerek saldırganı kandırır ve oyalarken sistemden tamamen izole eder.
-- **Nginx Gunicorn & Eventlet Production Mimarisi:** Flask'ın test sunucusu yerine asenkron Gunicorn + Eventlet WSGI mimarisine geçilmiştir. Nginx üzerinden Slowloris ve Brute-force saldırılarına karşı `limit_req` ve `limit_conn` kalkanları devreye alınmıştır.
-- **Out-of-Band (Ağ Geçidi Bağımsız) Interception:** DS-IPS ortamda bir Modem (Gateway) olmasa dahi hedef cihazı tespit edip ARP üzerinden trafiğini zorla kendi üzerine çeker (Intercept) ve kuralları uygular.
-
-### 🔥 Gelişmiş v3.0 - v4.0 Özellikleri
-- **Canlı Siber Radar (Cyber Radar):** Ağdaki kritik tehditleri (Örn: Rusya tabanlı C2 bağlantıları) radar ekranında görsel "Blip" (hedef) olarak yansıtan askeri tarz animasyon.
-- **Derin Paket İnceleme (DPI) ile SNI Sniffing:** DNS önbelleğini (Cache) ve Güvenli DNS'i (DoH) aşarak, internete çıkan şifreli (HTTPS) trafiğin içindeki alan adlarını (SNI) cımbızla çeker ve Canlı Gözetleme ekranına anında yansıtır.
-- **Anti-MITM Healing (Aktif İyileştirme):** Ağda bir ARP zehirlenmesi tespit edildiğinde saldırganı engellemekle kalmaz, kurban cihazların bağlantısı kopmasın diye ağa "Onarıcı (Healing)" Broadcast ARP paketleri fırlatır. Kendi koruma modülleriyle (Blocker) çakışmaması için Akıllı Beyaz Liste (Whitelist) kullanır.
-- **Akıllı Ses/Alarm Yönetimi (Debounce):** Yoğun ağ saldırılarında (Örn: Flood) üst üste binen alarm seslerini engelleyen 4 saniyelik Akıllı Cooldown algoritması.
-- **Gelişmiş Risk Grafiği:** Alarmları sadece "Risk Seviyesine" (Kritik🔴, Yüksek🟡, Orta🔵, Düşük🔘) göre dinamik 4 dilimde gruplayıp, üzerine gelindiğinde detaylı yüzdelik kırılımları gösteren profesyonel Tooltip entegrasyonu.
-
-### 1. 🔍 Gelişmiş Saldırı Tespiti (IDS - Intrusion Detection)
-- **ARP Spoofing / Zehirlenmesi:** Ağdaki cihazların kimliğine bürünerek Ortadaki Adam (MitM) saldırısı yapmaya çalışan cihazları anında yakalar.
-- **Port ve Ağ Taramaları:** Nmap, Masscan gibi araçlarla yapılan `SYN`, `FIN`, `NULL`, `XMAS` ve `UDP` port taramalarını hız ve desen analizi ile tespit eder.
-- **Denial of Service (DoS):** Hedef sisteme yönelik aşırı SYN paketi veya UDP flood saldırılarını tespit edip oran limiti ile bloklar.
-- **Kablosuz Ağ (Wi-Fi) Tehditleri:** `Deauth` (Ağdan düşürme) saldırılarını, sahte ağ yayınlarını (Beacon Flood) ve Şeytani İkiz (Evil Twin) ağlarını tespit eder.
-- **Bubi Tuzakları (Canary Tokens):** Ağda paylaşılan sahte dosyalar (`sirket_sifreleri.pdf`, `banka_bilgileri.xlsx`) açılmaya veya indirilmeye çalışıldığında alarm verir.
-
-### 2. 🛡️ Acımasız Saldırı Önleme (IPS - Intrusion Prevention)
-- **Layer 3 (IP/MAC) Ban:** Saldırganı `iptables` ile çekirdek düzeyinde engeller.
-- **Layer 2 Ağ İzolasyonu (ARP Blackholing):** VPN, Proxy veya DNS değiştirmek saldırganı kurtarmaz! IPS, modemi ve saldırganı sahte (00:00:00:00:00:00) MAC adresleriyle zehirleyerek saldırganın modeme ve internete olan fiziksel/mantıksal erişimini tamamen keser.
-- **Akıllı Süreli Ban:** Otomatik tespit edilen saldırganlar için ban süresi belirlenebilir, süre sonunda kilit otomatik açılır.
-
-### 3. 🌐 Canlı SOC Arayüzü (Premium Dashboard)
-- **Gerçek Zamanlı Ağ Haritası (Vis.js):** Ağdaki cihazları (Modem, PC, Telefon) simgelerle haritalandırır. Güvenli cihazlar yeşil, şüpheliler sarı, tehlikeliler kırmızı ile işaretlenir. Uyuyan cihazlar haritadan akıllıca gizlenir.
-- **Socket.IO Entegrasyonu:** Alarmlar ve yeni cihazlar, sayfayı yenilemeye gerek kalmadan anında ekrana (canlı akışa) yansır.
-- **Glassmorphism UI:** Uzay mavisi animasyonlu arka plan (Grid), buzlu cam kart tasarımları, hover mikro-animasyonlar ve fütüristik renk paleti ile üst düzey profesyonel görünüm.
-
-### 4. 📲 Uzaktan Bildirim ve Raporlama
-- **Discord & Telegram Entegrasyonu:** Ofiste değilken bile ağınıza bir saldırı olduğunda Discord sunucunuza veya Telegram botunuza saniyesinde kritik uyarı mesajları düşer.
-- **Sesli Alarmlar:** Kritik saldırılarda kontrol paneli (bilgisayar hoparlörü) üzerinden alarm sesleri çalarak operatörü uyarır.
-- **Adli Bilişim (PCAP) Kaydı:** Kritik (Kırmızı) seviye bir saldırı tespit edildiğinde, kanıt sunmak amacıyla saldırganın 60 saniyelik ağ trafiğini `tcpdump` ile PCAP dosyası olarak kaydeder.
-
-### 5. ⚡ Performans ve Otonom Optimizasyon (V2 Özellikleri)
-- **Akıllı Çöpçü (Garbage Collector):** Veritabanının şişmesini engellemek için, ağdaki cihazların ürettiği DNS (girilen site) loglarını tam 10 dakika sonra saniyesi saniyesine otomatik olarak kalıcı siler. Sistem yıllarca açık kalsa bile disk veya RAM dolmaz.
-- **Dinamik Ağ Gözetleme (Dynamic UI):** Paneldeki aktif cihazlar listesi, son 10 dakika içerisinde sinyal vermeyen (uyuyan veya ağdan kopan) cihazları arayüzden tamamen gizleyerek operatörün sadece o anki "Canlı" cihazlara odaklanmasını sağlar.
-- **False-Positive Koruması:** Sistemin kendi yaptığı periyodik ağ taramalarını (ARP) ve modemin DNS yanıt portlarını (53, 67, 68) beyaz listeye (Whitelist) alarak, kendi kendine sahte UDP Scan veya ARP DDoS alarmı üretmesini engeller. Sadece gerçek tehditlere odaklanır.
-
-### 6. 🔒 Askeri Düzey Arayüz Güvenliği
-- **HTTPS (SSL/TLS) Zorunluluğu:** Sistem `Adhoc SSL` ile çalışır, Burp Suite gibi Man-in-the-Middle Proxy araçlarının trafiği arasına girmesini (HSTS, CSP ile) engeller.
-- **JavaScript Obfuscation & Anti-Debugger:** Arayüzün kaynak kodları tamamen şifrelenmiştir. F12 (DevTools), Sağ tık veya kısayollarla kodları incelemeye çalışanların tarayıcıları Anti-Debugger döngüsü ile kilitlenir.
-- **Brute-Force ve CSRF Koruması:** Panele yetkisiz girişleri önlemek için 3 yanlış şifre denemesinde IP adresi 30 dakika kitlenir.
-
----
-
-## 🚀 Gelecek Planları (Future Works - v4.0 Vizyonu)
-
-DS-IPS, sürekli gelişen bir siber savunma kalkanı olarak tasarlanmıştır. Projenin gelecek sürümlerinde (v4.0) şu kurumsal SOC seviyesi özelliklerin eklenmesi planlanmaktadır:
-
-1. **🧠 Yapay Zeka (AI) ve Makine Öğrenimi (ML):** Sistemin sadece "kurallara" (Rule-based) göre değil, ağdaki kullanıcıların normal davranış modellerini öğrenerek (UEBA) hiç bilinmeyen (Zero-Day) anormallikleri saptaması.
-2. **🚧 Karantina Ağı (VLAN İzolasyonu):** Sadece ARP/iptables ile değil, kurumsal Switch'lerle (Cisco, Aruba vb.) 802.1x veya SNMP üzerinden haberleşip saldırganın fiziksel ağ kablosunu Karantina VLAN'ına atma yeteneği.
-3. **🕷️ Otonom Zafiyet Taraması:** Ağa katılan her yeni cihazı (Misafir Telefonu, Akıllı TV) otomatik ve sessizce tarayıp, sistem yöneticisine cihazdaki potansiyel açıkları (Açık SSH, Telnet) raporlaması.
-4. **🌍 Merkezi Bulut SIEM (ELK Stack):** Sistemi dağıtık (Distributed) sensörler halinde şirket şubelerine kurup, tüm saldırı verilerini ElasticSearch & Kibana üzerinde toplayan merkezi bir mimariye geçiş.
-5. **🔓 SSL/TLS Decryption (Tam Şifre Çözme):** Sadece SNI (Domain) bilgilerini okumakla kalmayıp, uç noktalara (Endpoint) kurulacak bir Root sertifikasıyla HTTPS trafiğinin içeriğini çözüp derin inceleme yapılması.
-
----
-
-## 🛠️ Kurulum ve Çalıştırma
-
-### Gereksinimler
-- Linux Tabanlı İşletim Sistemi (Kali Linux, Arch, Ubuntu vb.)
-- Python 3.x
-- Root (`sudo`) yetkisi (IPS ve paket dinleme işlemleri için zorunludur)
-
-### Başlatma
-1. Sistemdeki gerekli Python kütüphanelerini kurun (Kali sistemlerinde apt paket yöneticisi ile).
-2. Production Sunucusunu Nginx üzerinden başlatmak için (v5.0+):
 ```bash
-sudo ./start_prod.sh
+./install.sh
+cp config/env.example .env
+.venv/bin/python web_main.py --mode ids --interface eth0
 ```
-3. Eğer geliştirme (Development) ortamında başlatacaksanız:
-```bash
-sudo python3 web_main.py --target 192.168.1.0/24 --interface eth0
-```
-*(Kablosuz ağ dinlemesi yapmak için komutun sonuna `--wifi` ekleyebilirsiniz.)*
 
-3. Tarayıcınızdan **https://localhost:5000** veya **https://127.0.0.1:5000** adresine gidin.
-4. İlk girişte tarayıcı SSL uyarısı verecektir (Gelişmiş > İlerle diyerek geçin).
-5. Terminalde yazan "Rastgele Üretilen" Kullanıcı Adı ve Şifre ile sisteme giriş yapın.
+Panel: **http://127.0.0.1:5000**. Kullanıcı adı varsayılan olarak `admin`; parola belirtilmezse başlangıçta üretilip terminalde gösterilir. Sabit giriş bilgileri için `.env` içinde `DS_IPS_USER`, `DS_IPS_PASSWORD` ve uzun rastgele bir `DS_IPS_SECRET_KEY` tanımlayın.
+
+Panelin açılması paket yakalamayı veya aktif savunmayı başlatmaz. İzlemeyi paneldeki **Başlat** düğmesiyle açın. Paket yakalama için sistemde **tshark, libpcap** ve uygun yakalama yetkileri gerekir. IPS işlemleri ayrıca **iptables, ipset, iproute2** ve root yetkisi kullanır; DHCP özelliği **dnsmasq** gerektirir. Bu sistem araçları Python kurulum betiği tarafından kurulmaz.
+
+```bash
+# IPS: gerçek ağ arayüzünüzü belirtin.
+sudo .venv/bin/python web_main.py --mode ips --interface eth0
+
+# Panel ile birlikte gerçek paket yakalama ve IPS servislerini başlatın.
+sudo .venv/bin/python web_main.py --mode ips --interface eth0 --autostart
+
+# Tespit çalışsın, engelleme ve aktif tarama yapılmasın.
+.venv/bin/python web_main.py --mode ips --dry-run --interface eth0
+
+# ARP keşfi için alt ağı açıkça seçin.
+sudo .venv/bin/python web_main.py --interface eth0 --target 192.168.1.0/24
+
+# İsteğe bağlı entegrasyonlar
+.venv/bin/python -m pip install -r requirements-optional.txt
+```
+
+`any` yakalama arayüzü seçeneğidir; ARP keşfi, yönlendirme ve IPS için fiziksel ağ arayüzünü kullanın. Wi-Fi algılama uygun donanım ve monitor mode ister.
+
+## Web arayüzü
+
+Ana panel, giriş ekranı ve SOC analiz sayfası ortak bir tasarım sistemi kullanır. Mobil yan menü, klavye ile yönetilebilen pencereler, canlı alarm filtreleri ve yerel coğrafi harita dahildir. İşletim sisteminin hareketi azaltma tercihi desteklenir.
+
+[Lenis 1.3.26](https://github.com/darkroomengineering/lenis) sayfa kaydırmasını, [Anime.js 4.5.0](https://animejs.com/documentation/) bölüm geçişlerini ve bildirim animasyonlarını yönetir. Sürümleri sabitlenmiş dosyalar ve lisansları `web/static/vendor/` içinde bulunur; paneli çalıştırmak için Node.js veya CDN bağlantısı gerekmez. IP konumu sorguları sunucu üzerinden harici GeoIP hizmetini kullanmaya devam eder.
+
+Frontend bağımlılıklarını yeniden hazırlamak veya geliştirme kontrollerini çalıştırmak için:
+
+```bash
+npm ci --ignore-scripts
+npm run vendor
+npm run check
+npm run format:check
+```
+
+Tarayıcı regresyonu, Playwright ve Chromium kurulu geliştirme ortamında çalışır. Geçici veritabanı kullanır; paket yakalama veya aktif savunma başlatmaz:
+
+```bash
+PYTHONPATH=. .venv/bin/python tests/browser_smoke.py
+# İsteğe bağlı masaüstü/mobil ekran görüntüleri:
+DS_IPS_SCREENSHOTS=/tmp/dsips-ui PYTHONPATH=. .venv/bin/python tests/browser_smoke.py
+```
+
+## Çalışma modları
+
+- **IDS:** algılama yapar; otomatik ARP iyileştirme, DNS sahte yanıtı ve engelleme uygulamaz. Elle başlatılan keşif/port taraması aktif trafik üretir.
+- **IPS:** izleme başlatıldığında engelleme motoru ve tuzak servislerini de açar. Algılama kuralları, yerleşim ve beyaz liste ağınıza göre değerlendirilmelidir.
+- **Dry-run:** aktif savunma ve aktif tarama kapalıdır; engelleme başarısı veya gerçek ban kaydı üretmez.
+
+DNS gözlemleri sorgu ve yanıt ayrımı yapar. SNI ayrıştırması tek paketteki tam TLS ClientHello üzerinde çalışır; parçalanmış TCP akışını birleştirmez ve ECH/şifreli DNS içeriğini çözmez. Açık port taraması bir servisin erişilebilir olduğunu gösterir; zafiyet bulunduğuna tek başına kanıt oluşturmaz.
+
+## Üretim sunucusu
+
+```bash
+./start_prod.sh
+```
+
+Başlatıcı, tek süreçte 20 thread kullanan Gunicorn sunucusunu açar. Varsayılan adres `127.0.0.1:5000`, varsayılan mod IDS'dir. `.env` içindeki `DS_IPS_BIND`, `DS_IPS_INTERFACE`, `DS_IPS_MODE`, `DS_IPS_DB` ve diğer seçenekler `config/env.example` içinde açıklanır. Sensörler, oturumlar ve ağ kuralları süreç içinde tutulduğu için worker sayısını artırmayın ve `--preload` kullanmayın.
+
+Nginx HTTPS kurulumu için var olan sertifika/anahtarı kullanın:
+
+```bash
+sudo env DSIPS_SERVER_NAME=soc.example.org \
+  DSIPS_TLS_CERT=/etc/letsencrypt/live/soc.example.org/fullchain.pem \
+  DSIPS_TLS_KEY=/etc/letsencrypt/live/soc.example.org/privkey.pem \
+  ./setup_nginx.sh
+```
+
+Bu kurulumda `.env` için `DS_IPS_TRUST_PROXY=true` ve `DS_IPS_COOKIE_SECURE=true` ayarlayın; backend loopback adresinde kalsın. Doğrudan yerel HTTP kullanımında iki seçenek de `false` olmalıdır. Nginx betiği mevcut diğer siteleri silmez, yapılandırma doğrulaması başarısız olursa önceki dosyayı geri yükler.
+
+`dsips.service` dosyası `/opt/ds-ips` kurulumu için örnektir. Dosya yollarını kurulumunuza göre düzenleyip servis olarak yükleyin. Kurulum ve başlatma betikleri `systemd-resolved` servisini durdurmaz veya kendiliğinden IP forwarding açmaz. Gateway işlemi kendi eklediği kuralları ve önceki forwarding değerini izler.
+
+## Oturumlar ve veri
+
+Giriş, API değişiklikleri ve çıkış CSRF doğrulaması kullanır. Socket.IO bağlantısı aynı etkin oturuma bağlıdır; çıkış bağlantıyı ve oturumu geçersizleştirir. HTTPS ters proxyde sonlandırılır. PCAP kayıtları statik dizinden sunulmaz; indirme yetkili API üzerinden yapılır.
+
+HIDS, geliştirme ve üretim giriş noktalarında ortak yaşam döngüsüyle çalışır. `DS_IPS_HIDS=false` ile kapatılabilir. Telegram yönetim botu için isteğe bağlı bağımlılıkları kurup `DS_IPS_TELEGRAM=true`, `BOT_TOKEN` ve `CHAT_ID` tanımlayın. Bot komutları yapılandırılmış sohbetle sınırlıdır.
+
+## Doğrulama
+
+```bash
+.venv/bin/python -m pip install -r requirements-dev.txt -r requirements-optional.txt
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check .
+node --check web/static/app.js
+node --check web/static/security.js
+bash -n install.sh start_prod.sh setup_nginx.sh
+```
+
+`tests/` altındaki regresyonlar sentetik paketler, geçici veritabanları ve taklit ağ işlemleri kullanır. Otomatik testler ağa saldırı paketi göndermez ve gerçek güvenlik duvarını değiştirmez. `ds_ips_auditor.py` ve `ds_ips_qa_suite.py` ise elle kullanılan aktif laboratuvar araçlarıdır; bağlantı hataları veya paket gönderimi, tespitin doğrulandığı anlamına gelmez.
+
+Tarayıcı kontrolü için Playwright ve Chromium kurulu olmalıdır:
+
+```bash
+.venv/bin/python -m pip install playwright
+PYTHONPATH=. .venv/bin/python tests/browser_smoke.py
+```
+
+Bu kontrol geçici veritabanıyla giriş, Socket.IO, güvenilmeyen metin gösterimi, ayarlar, Premium panel ve çıkışı doğrular. Chromium yolu varsayılan olarak `/usr/bin/chromium` kullanılır.
+
+Denetim kapsamı ve doğrulama sonuçları: [Teknik denetim raporu](docs/TEKNIK_DENETIM.md). Eski sürüm sunumları ve özellik metinleri tarihsel belgelerdir; güncel kurulum ve davranış için bu dosyayı esas alın.
 
 ---
 

@@ -5,15 +5,20 @@
 
 import threading
 import subprocess
-import time
+import ipaddress
 
 class VulnScanner:
     """
     Ağa yeni katılan cihazları algıladığında arkaplanda Nmap zafiyet taraması yapar.
     Açık kritik portlar bulunursa sisteme alarm düşer.
     """
-    def __init__(self, db):
+    def __init__(self, db, dry_run=False):
         self.db = db
+        self.dry_run = dry_run
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+        self._slots = threading.BoundedSemaphore(2)
+        self._threads = set()
         # Daha önce taradığımız cihazları hafızada tutalım ki sürekli taramasın
         self.scanned_ips = set()
         
@@ -28,23 +33,51 @@ class VulnScanner:
             '3306': 'MySQL (Veritabanı)'
         }
 
-    def scan_ip_async(self, ip, mac):
-        """IP adresini arkaplanda thread olarak tarar."""
-        if ip in self.scanned_ips or ip == 'N/A' or ip == '127.0.0.1':
-            return
-            
-        self.scanned_ips.add(ip)
-        thread = threading.Thread(target=self._run_nmap_scan, args=(ip, mac))
-        thread.daemon = True
-        thread.start()
+    def scan_ip_async(self, ip, mac='N/A'):
+        if self.dry_run or self._stop_event.is_set():
+            return False
+        try:
+            address = ipaddress.IPv4Address(ip)
+        except (ValueError, TypeError):
+            return False
+        if address.is_loopback or address.is_multicast or address.is_unspecified or str(address) == '255.255.255.255':
+            return False
+        ip = str(address)
+        with self._lock:
+            if ip in self.scanned_ips or not self._slots.acquire(blocking=False):
+                return False
+            if len(self.scanned_ips) >= 10000:
+                self.scanned_ips.pop()
+            self.scanned_ips.add(ip)
+            thread = threading.Thread(target=self._scan_worker, args=(ip, mac), daemon=True)
+            self._threads.add(thread)
+            thread.start()
+        return True
+
+    def _scan_worker(self, ip, mac):
+        try:
+            self._run_nmap_scan(ip, mac)
+        finally:
+            with self._lock:
+                self._threads.discard(threading.current_thread())
+            self._slots.release()
+
+    def start(self):
+        self._stop_event.clear()
+
+    def stop(self):
+        self._stop_event.set()
+        with self._lock:
+            threads = list(self._threads)
+        for thread in threads:
+            thread.join(timeout=1)
 
     def _run_nmap_scan(self, ip, mac):
         """Python socket ile hızlı port taraması yapar (Nmap yetki sorunu yaşamamak için)."""
         try:
-            import re
             import socket
-            if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
-                print(f"Vuln Scanner Warning: Invalid IP format {ip}")
+            ip = str(ipaddress.IPv4Address(ip))
+            if self.dry_run or self._stop_event.is_set():
                 return
                 
             open_ports = []
@@ -59,12 +92,13 @@ class VulnScanner:
             
             for port_str in target_ports:
                 port = int(port_str)
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(0.3)  # Hızlı timeout
-                result = s.connect_ex((ip, port))
-                if result == 0:
-                    open_ports.append(port_str)
-                s.close()
+                if self._stop_event.is_set():
+                    return
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
+                    client.settimeout(0.3)
+                    result = client.connect_ex((ip, port))
+                    if result == 0:
+                        open_ports.append(port_str)
 
                     
             # Kritik portlardan herhangi biri açık mı?
@@ -74,25 +108,25 @@ class VulnScanner:
                     found_criticals.append(f"Port {port} ({self.critical_ports[port]})")
                     
             if found_criticals:
-                desc = "Otonom Tarama: Cihazda KRİTİK açık portlar tespit edildi!\n"
+                desc = "Port Taraması: İncelenmesi gereken ağ servisleri bulundu (zafiyet doğrulanmadı).\n"
                 desc += "Açık Kapılar: " + ", ".join(found_criticals)
                 
                 self.db.add_alert(
-                    alert_type='Auto-Vuln Scanner (Zafiyet)',
+                    alert_type='Port Scanner (Açık Servisler)',
                     src_ip=ip, src_mac=mac,
                     dst_ip='System', dst_mac='N/A',
                     description=desc,
-                    severity='high'
+                    severity='warning'
                 )
             else:
-                desc = "Otonom Tarama: Cihaz tarandı, kritik bir zafiyet bulunamadı."
+                desc = "Port Taraması: Seçili portlarda bağlantı kontrolü tamamlandı; zafiyet analizi yapılmadı."
                 if open_ports:
                     desc += f" (Açık Portlar: {', '.join(open_ports)})"
                 else:
-                    desc += " (Tüm portlar kapalı/güvenli)"
+                    desc += " (Seçili portlara bağlantı kurulamadı; kapalı veya filtrelenmiş olabilir)"
                     
                 self.db.add_alert(
-                    alert_type='Auto-Vuln Scanner (Güvenli)',
+                    alert_type='Port Scanner (Tamamlandı)',
                     src_ip=ip, src_mac=mac,
                     dst_ip='System', dst_mac='N/A',
                     description=desc,

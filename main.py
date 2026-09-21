@@ -6,16 +6,12 @@
 # ========================================================================
 
 #!/usr/bin/env python3
-import sys
 import os
 import argparse
-import time
 
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.layout import Layout
-from rich import print as rprint
 from rich.prompt import Prompt
 
 from core.database import Database
@@ -101,19 +97,23 @@ class SOCConsole:
 
     def start_systems(self):
         if not self.sniffer.running:
+            if not self.blocker.start():
+                console.print("[bold red]Engelleme motoru başlatılamadı.[/bold red]")
+                return
             self.sniffer.start()
             self.honeypot.start()
+            self.threat_intel.start()
             console.print("[bold green]✔ Sniffer ve Honeypot (Port: 21, 23, 445) başlatıldı. Ağ izleniyor...[/bold green]")
         else:
             console.print("[bold yellow]⚠ Sistemler zaten aktif.[/bold yellow]")
 
     def stop_systems(self):
-        if self.sniffer.running:
-            self.sniffer.stop()
-            self.honeypot.stop()
-            console.print("[bold green]✔ Sniffer ve Honeypot durduruldu.[/bold green]")
-        else:
-            console.print("[bold yellow]⚠ Sistemler şu anda çalışmıyor.[/bold yellow]")
+        self.sniffer.stop()
+        self.honeypot.stop()
+        self.scanner.stop()
+        self.threat_intel.stop()
+        self.blocker.stop()
+        console.print("[bold green]✔ Sistemler durduruldu.[/bold green]")
 
     def run_scanner(self):
         with console.status("[bold cyan]Ağ taranıyor (ARP Ping)... Lütfen bekleyin...[/bold cyan]", spinner="dots"):
@@ -152,7 +152,7 @@ class SOCConsole:
         console.print(table)
 
     def list_alerts(self):
-        alerts = self.db.get_recent_alerts(limit=15)
+        alerts = self.db.get_alerts(limit=15)
         if not alerts:
             console.print("[bold green]✔ Kayıtlı hiçbir tehdit veya alarm bulunamadı.[/bold green]")
             return
@@ -165,7 +165,7 @@ class SOCConsole:
         
         for a in alerts:
             src = f"{a['source_ip'] or 'N/A'}\n{a['source_mac'] or 'N/A'}"
-            table.add_row(a['alert_time'], a['alert_type'], src, a['description'])
+            table.add_row(a['timestamp'], a['alert_type'], src, a['description'])
             
         console.print(table)
 
@@ -195,19 +195,28 @@ class SOCConsole:
             console.print("[bold yellow]İşlem iptal edildi.[/bold yellow]")
             return
             
-        if ip:
-            self.blocker.block_ip(ip, reason="SOC Konsol - Manuel Ban")
-        elif mac:
-            self.blocker.block_mac(mac, reason="SOC Konsol - Manuel Ban")
+        try:
+            if not self.blocker.start():
+                console.print("[red]Engelleme motoru başlatılamadı.[/red]")
+                return
+            success = (self.blocker.block_ip(ip, reason="SOC Konsol - Manuel Ban") if ip
+                       else self.blocker.block_mac(mac, reason="SOC Konsol - Manuel Ban"))
+            if not success:
+                console.print("[yellow]Yeni bir engelleme uygulanmadı.[/yellow]")
+        except ValueError as exc:
+            console.print(str(exc), style="red", markup=False)
 
     def manual_unban(self):
         ip = Prompt.ask("İzolasyonu kaldırılacak IP").strip()
         mac = Prompt.ask("İzolasyonu kaldırılacak MAC").strip()
         
-        if ip:
-            self.blocker.unblock_ip(ip)
-        if mac:
-            self.blocker.unblock_mac(mac)
+        try:
+            if ip:
+                self.blocker.unblock_ip(ip)
+            if mac:
+                self.blocker.unblock_mac(mac)
+        except ValueError as exc:
+            console.print(str(exc), style="red", markup=False)
 
     def run(self):
         if os.geteuid() != 0:
@@ -229,11 +238,8 @@ class SOCConsole:
             elif choice == '7': self.manual_ban()
             elif choice == '8': self.manual_unban()
             elif choice == '9':
-                self.stop_systems()
-                self.blocker.stop()
-                self.db.close()
                 console.print("[bold green]✔ Sistem kapatıldı. Güvenli günler.[/bold green]")
-                sys.exit(0)
+                return
                 
             Prompt.ask("\n[dim]Devam etmek için Enter'a basın...[/dim]")
 
@@ -248,10 +254,10 @@ def main():
     try:
         app.run()
     except KeyboardInterrupt:
-        app.stop_systems()
-        app.blocker.stop()
-        app.db.close()
         console.print("\n[bold green]✔ Sistem kapatıldı.[/bold green]")
+    finally:
+        app.stop_systems()
+        app.db.close()
 
 if __name__ == "__main__":
     main()

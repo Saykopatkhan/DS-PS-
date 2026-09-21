@@ -1,14 +1,18 @@
 [Unit]
-Description=DS-IPS Next-Gen Hybrid Intrusion Prevention System
-After=network.target
+Description=DS-IPS Intrusion Detection and Prevention Dashboard
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/kali/İndirilenler/ds_ips_project
-ExecStart=/usr/bin/python3 /home/kali/İndirilenler/ds_ips_project/web_main.py -i wlan0
+WorkingDirectory=/opt/ds-ips
+EnvironmentFile=-/opt/ds-ips/.env
+ExecStart=/opt/ds-ips/start_prod.sh
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=45
+UMask=0077
 StandardOutput=journal
 StandardError=journal
 

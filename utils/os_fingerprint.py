@@ -15,7 +15,7 @@ class OSFingerprint:
         """
         TTL (Time To Live) değerine bakarak tahmini OS döndürür.
         """
-        if not ttl:
+        if not isinstance(ttl, int) or not 1 <= ttl <= 255:
             return "Bilinmiyor"
             
         # Standart başlangıç TTL değerlerine yakınlık
@@ -62,11 +62,12 @@ class OSFingerprint:
             return signatures[opt_str]
             
         # Kaba tahmin (Tam eşleşme yoksa)
-        if "121" in opt_str and "252" in opt_str and "119" in opt_str:
+        options = set(options_list)
+        if {121, 252, 119} <= options:
             return "Apple Cihaz (Tahmini)"
-        if "26" in opt_str and "28" in opt_str and "51" in opt_str and "58" in opt_str:
+        if {26, 28, 51, 58} <= options:
             return "Windows (Tahmini)"
-        if "33" in opt_str and "42" in opt_str:
+        if {33, 42} <= options:
             return "Android (Tahmini)"
             
         return "Bilinmiyor"

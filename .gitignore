@@ -18,4 +18,9 @@ htmlcov/
 # İşletim sistemi kalıntıları
 .DS_Store
 Thumbs.db
-web/static/app.src.js
+.venv/
+.venv-*/
+.ruff_cache/
+config/config.json
+data/*.jsonl
+node_modules/

@@ -100,226 +100,241 @@ QUARANTINE_HTML = """
 """
 
 class DNSSinkhole:
-    def __init__(self, port=8099, db=None):
-        self.port = port
+    def __init__(self, port=8099, db=None, dry_run=False, sinkhole_ip='127.0.0.1', interface=None):
+        from pathlib import Path
+        import ipaddress
+        self.port = int(port)
+        if not 1 <= self.port <= 65535:
+            raise ValueError('Invalid portal port')
         self.db = db
-        self.app = Flask("dns_sinkhole")
+        self.dry_run = dry_run
+        self.sinkhole_ip = str(ipaddress.IPv4Address(sinkhole_ip))
+        self.interface = interface
+        self.app = Flask('dns_sinkhole')
+        self.app.config['MAX_CONTENT_LENGTH'] = 65536
         self.quarantined_ips = set()
+        self._lock = threading.RLock()
+        self._stop_event = threading.Event()
+        self._threads = []
+        self._http_server = None
+        self._dns_socket = None
+        self.running = False
         self.blocklist = []
-        self.blocklist_path = 'assets/dns_blocklist.json'
+        self.blocklist_path = str(Path(__file__).resolve().parents[1] / 'assets' / 'dns_blocklist.json')
         self.load_blocklist()
 
         @self.app.route('/', defaults={'path': ''}, methods=['GET', 'POST'])
         @self.app.route('/<path:path>', methods=['GET', 'POST'])
         def quarantine_page(path):
-            user_ip = request.remote_addr
-            
-            # Mobil Cihazlar (Captive Portal) için HTTP 200 dönmek zorunludur.
-            # Apple cihazları '/hotspot-detect.html', Android cihazları '/generate_204' bekler.
-            if request.path in ['/hotspot-detect.html', '/generate_204', '/canonical.html', '/ncsi.txt']:
-                return render_template_string(QUARANTINE_HTML, ip=user_ip), 200
-                
-            return render_template_string(QUARANTINE_HTML, ip=user_ip), 403
+            status = 200 if request.path in ['/hotspot-detect.html', '/generate_204', '/canonical.html', '/ncsi.txt'] else 403
+            return render_template_string(QUARANTINE_HTML, ip=request.remote_addr), status
+
+    @staticmethod
+    def _normalize_domains(domains):
+        import re
+        if not isinstance(domains, list) or len(domains) > 100000:
+            raise ValueError('Blocklist must be a list of at most 100000 domains')
+        result = set()
+        for domain in domains:
+            if not isinstance(domain, str):
+                raise ValueError('Domain must be a string')
+            name = domain.strip().rstrip('.').encode('idna').decode('ascii').lower()
+            if len(name) > 253 or not name or any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label) for label in name.split('.')):
+                raise ValueError('Invalid domain')
+            result.add(name)
+        return sorted(result)
 
     def load_blocklist(self):
-        import json, os
+        import json
         try:
-            if os.path.exists(self.blocklist_path):
-                with open(self.blocklist_path, 'r') as f:
-                    self.blocklist = json.load(f)
-            else:
-                self.blocklist = ['malware.com', 'phishing.net', 'hacker.io']
-        except Exception as e:
-            logger.error(f"[!] Error loading blocklist: {e}")
-            self.blocklist = ['malware.com', 'phishing.net', 'hacker.io']
+            with open(self.blocklist_path, encoding='utf-8') as stream:
+                domains = self._normalize_domains(json.load(stream))
+        except FileNotFoundError:
+            domains = []
+        except (OSError, ValueError, UnicodeError) as exc:
+            logger.error('Error loading blocklist: %s', exc)
+            domains = []
+        with self._lock:
+            self.blocklist = domains
 
     def update_blocklist(self, domains):
-        import json, os
+        import json
+        import os
+        import tempfile
+        path = None
         try:
-            os.makedirs(os.path.dirname(self.blocklist_path), exist_ok=True)
-            with open(self.blocklist_path, 'w') as f:
-                json.dump(domains, f)
-            self.blocklist = domains
+            domains = self._normalize_domains(domains)
+            directory = os.path.dirname(os.path.abspath(self.blocklist_path))
+            os.makedirs(directory, exist_ok=True)
+            with self._lock:
+                with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=directory, delete=False) as stream:
+                    path = stream.name
+                    json.dump(domains, stream)
+                os.replace(path, self.blocklist_path)
+                path = None
+                self.blocklist = domains
             return True
-        except Exception as e:
-            logger.error(f"[!] Error saving blocklist: {e}")
+        except (OSError, ValueError, UnicodeError) as exc:
+            logger.error('Error saving blocklist: %s', exc)
             return False
+        finally:
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
     def is_blocked(self, domain):
-        """Check if a domain is in the blocklist."""
-        # domain might have a trailing dot
-        clean_domain = domain.rstrip('.').lower()
-        for bad in self.blocklist:
-            if bad.lower() in clean_domain:
-                return True
-        return False
+        try:
+            if isinstance(domain, bytes):
+                domain = domain.decode('ascii')
+            name = domain.rstrip('.').encode('idna').decode('ascii').lower()
+        except (AttributeError, UnicodeError):
+            return False
+        with self._lock:
+            return any(name == bad or name.endswith('.' + bad) for bad in self.blocklist)
 
     def start(self):
-        """Karantina Web Portalını başlatır."""
-        import logging
-        log = logging.getLogger('werkzeug')
-        log.disabled = True
-        
-        t = threading.Thread(
-            target=lambda: self.app.run(host='0.0.0.0', port=self.port, debug=False, use_reloader=False),
-            daemon=True
-        )
-        t.start()
-        logger.info(f"[+] DNS Sinkhole / Karantina Portalı port {self.port} üzerinde aktif.")
-        
-        # UDP 53 DNS Dinleyicisini başlat
-        t_dns = threading.Thread(target=self._start_dns_server, daemon=True)
-        t_dns.start()
+        if self.running or self.dry_run:
+            return
+        from werkzeug.serving import make_server
+        import ipaddress
+        try:
+            if ipaddress.ip_address(self.sinkhole_ip).is_loopback and self.interface:
+                from scapy.all import get_if_addr
+                address = get_if_addr(self.interface)
+                if address != '0.0.0.0':
+                    self.sinkhole_ip = address
+            self._http_server = make_server('0.0.0.0', self.port, self.app)
+        except (OSError, SystemExit) as exc:
+            logger.error('Quarantine portal could not start: %s', exc)
+            return
+        self._stop_event.clear()
+        self.running = True
+        for target in (self._http_server.serve_forever, self._start_dns_server):
+            thread = threading.Thread(target=target, daemon=True)
+            self._threads.append(thread)
+            thread.start()
+
+    def _dns_response(self, data, source_ip):
+        from scapy.all import DNS, DNSQR, DNSRR
+        import ipaddress
+        import struct
+        if len(data) < 12:
+            return None
+        try:
+            query = DNS(data)
+            if len(data) < 12 or query.qr or query.opcode or query.qdcount != 1 or not query.haslayer(DNSQR):
+                return None
+            question = query[DNSQR]
+            if question.qclass != 1:
+                return None
+            blocked = source_ip in self.quarantined_ips or self.is_blocked(question.qname)
+            response = DNS(id=query.id, qr=1, rd=query.rd, ra=0, qd=question.copy(), rcode=0 if blocked else 5)
+            target = ipaddress.ip_address(self.sinkhole_ip)
+            if blocked and question.qtype == 1 and not target.is_loopback and not target.is_unspecified:
+                response.an = DNSRR(rrname=question.qname, type='A', ttl=10, rdata=str(target))
+            return bytes(response)
+        except (ValueError, TypeError, IndexError, AttributeError, struct.error):
+            return None
 
     def _start_dns_server(self):
         import socket
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind(('0.0.0.0', 53))
-            logger.info("[+] DNS Sinkhole / UDP 53 dinleyicisi aktif.")
-            
-            while True:
-                try:
-                    data, addr = sock.recvfrom(512)
-                    if len(data) >= 12:
-                        tx_id = data[:2]
-                        flags = b'\x81\x80'
-                        counts = b'\x00\x01\x00\x01\x00\x00\x00\x00'
-                        query = data[12:]
-                        # 127.0.0.1 (Karantina portaline) yönlendiriyoruz
-                        answer = b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04\x7f\x00\x00\x01'
-                        response = tx_id + flags + counts + query + answer
-                        sock.sendto(response, addr)
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.error(f"[!] DNS Sinkhole UDP 53 dinleyicisi başlatılamadı: {e}")
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                self._dns_socket = sock
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.settimeout(0.5)
+                sock.bind(('0.0.0.0', 53))
+                while not self._stop_event.is_set():
+                    try:
+                        data, addr = sock.recvfrom(4096)
+                        response = self._dns_response(data, addr[0])
+                        if response:
+                            sock.sendto(response, addr)
+                    except socket.timeout:
+                        continue
+                    except OSError:
+                        break
+        except OSError as exc:
+            logger.error('DNS listener could not start: %s', exc)
+        finally:
+            self._dns_socket = None
 
+    def stop(self):
+        self.running = False
+        self._stop_event.set()
+        if self._dns_socket:
+            self._dns_socket.close()
+        if self._http_server:
+            self._http_server.shutdown()
+            self._http_server.server_close()
+            self._http_server = None
+        for thread in self._threads:
+            if thread is not threading.current_thread():
+                thread.join(timeout=2)
+        self._threads.clear()
+        for ip in list(self.quarantined_ips):
+            self.remove_quarantine_redirect(ip)
+
+    def _rules(self, ip):
+        # These rules are identifiable and never overlap administrator-owned rules.
+        comment = ['-m', 'comment', '--comment', 'dsips-quarantine']
+        return [
+            (['-t', 'nat'], 'PREROUTING', ['-s', ip, '-p', 'tcp', '--dport', '80', *comment, '-j', 'REDIRECT', '--to-ports', str(self.port)]),
+            (['-t', 'nat'], 'PREROUTING', ['-s', ip, '-p', 'udp', '--dport', '53', *comment, '-j', 'REDIRECT', '--to-ports', '53']),
+            ([], 'FORWARD', ['-s', ip, *comment, '-j', 'DROP']),
+        ]
+
+    @staticmethod
+    def _address(ip):
+        import ipaddress
+        return str(ipaddress.IPv4Address(ip))
+
+    @staticmethod
+    def _run_rule(table, action, chain, rule):
+        return subprocess.run(['iptables', '-w', '2', *table, action, chain, *rule],
+                              capture_output=True, timeout=5)
 
     def redirect_to_quarantine(self, ip):
-        """Saldırgan IP trafiğini Karantina web portalına (8099) yönlendirir.
-        Hem direkt hem ağ geçidi modunda çalışır. HTTP → Karantina portali, diğer trafik → DROP."""
+        if self.dry_run:
+            return False
+        added = []
         try:
-            rules_added = 0
-            my_ip = None
-            try:
-                result = subprocess.run(['hostname', '-I'], capture_output=True, text=True)
-                my_ip = result.stdout.strip().split()[0]
-            except Exception:
-                my_ip = '127.0.0.1'
-            
-            # Kural 1: HTTP trafiğini karantina portalına yönlendir (PREROUTING - direkt)
-            check = subprocess.run(f"iptables -t nat -C PREROUTING -p tcp -s {ip} --dport 80 -j REDIRECT --to-ports {self.port}",
-                                 shell=True, capture_output=True)
-            if check.returncode != 0:
-                subprocess.run(f"iptables -t nat -A PREROUTING -p tcp -s {ip} --dport 80 -j REDIRECT --to-ports {self.port}",
-                             shell=True, check=True, capture_output=True)
-                rules_added += 1
-            
-            # Kural 2: Gateway modunda HTTP trafiğini DNAT ile karantina portalına yönlendir
-            if my_ip:
-                check2 = subprocess.run(f"iptables -t nat -C PREROUTING -p tcp -s {ip} --dport 80 -j DNAT --to-destination {my_ip}:{self.port}",
-                                       shell=True, capture_output=True)
-                if check2.returncode != 0:
-                    subprocess.run(f"iptables -t nat -A PREROUTING -p tcp -s {ip} --dport 80 -j DNAT --to-destination {my_ip}:{self.port}",
-                                 shell=True, capture_output=True)
-                    rules_added += 1
-
-            # Kural 3: HTTPS (443) trafiğini engelle (sertifika olmadan yönlendirilemez)
-            check3 = subprocess.run(f"iptables -C FORWARD -s {ip} -p tcp --dport 443 -j DROP",
-                                  shell=True, capture_output=True)
-            if check3.returncode != 0:
-                subprocess.run(f"iptables -I FORWARD -s {ip} -p tcp --dport 443 -j DROP",
-                             shell=True, check=True, capture_output=True)
-                rules_added += 1
-            
-            # Kural 4: Mobil QUIC (HTTP/3 - UDP 443) Engelle (Cihazı TCP'ye zorla)
-            check4 = subprocess.run(f"iptables -C FORWARD -s {ip} -p udp --dport 443 -j REJECT",
-                                  shell=True, capture_output=True)
-            if check4.returncode != 0:
-                subprocess.run(f"iptables -I FORWARD -s {ip} -p udp --dport 443 -j REJECT",
-                             shell=True, capture_output=True)
-                rules_added += 1
-
-            # Kural 5: DoT (DNS over TLS - Port 853) Engelle
-            check5 = subprocess.run(f"iptables -C FORWARD -s {ip} -p tcp --dport 853 -j REJECT",
-                                  shell=True, capture_output=True)
-            if check5.returncode != 0:
-                subprocess.run(f"iptables -I FORWARD -s {ip} -p tcp --dport 853 -j REJECT",
-                             shell=True, capture_output=True)
-                subprocess.run(f"iptables -I FORWARD -s {ip} -p udp --dport 853 -j REJECT",
-                             shell=True, capture_output=True)
-                
-            # Kural 6: Bilinen DoH Sunucularını Engelle (Google, Cloudflare, Quad9)
-            for doh_ip in ['8.8.8.8', '8.8.4.4', '1.1.1.1', '1.0.0.1', '9.9.9.9']:
-                subprocess.run(f"iptables -I FORWARD -s {ip} -d {doh_ip} -j REJECT", shell=True, capture_output=True)
-
-            # Kural 7: Sadece Kendi UDP 53'ümüze (DNS Sinkhole) izin ver, diğerlerini düşür
-            check7 = subprocess.run(f"iptables -C FORWARD -s {ip} -p udp --dport 53 -j ACCEPT",
-                                  shell=True, capture_output=True)
-            if check7.returncode != 0:
-                subprocess.run(f"iptables -I FORWARD -s {ip} -p udp --dport 53 -j ACCEPT",
-                             shell=True, capture_output=True)
-            
-            check8 = subprocess.run(f"iptables -C FORWARD -s {ip} -p tcp --dport 80 -j ACCEPT",
-                                  shell=True, capture_output=True)
-            if check8.returncode != 0:
-                subprocess.run(f"iptables -I FORWARD -s {ip} -p tcp --dport 80 -j ACCEPT",
-                             shell=True, capture_output=True)
-                
-            # Son olarak: tüm geri kalan trafiği engelle 
-            check9 = subprocess.run(f"iptables -C FORWARD -s {ip} -j DROP",
-                                  shell=True, capture_output=True)
-            if check9.returncode != 0:
-                subprocess.run(f"iptables -A FORWARD -s {ip} -j DROP",
-                             shell=True, check=True, capture_output=True)
-                rules_added += 1
-            
-            self.quarantined_ips.add(ip)
-            logger.info(f"[+] IP {ip} Karantina Portalına ({self.port}) yönlendirildi ({rules_added} kural).")
+            ip = self._address(ip)
+            with self._lock:
+                if ip in self.quarantined_ips:
+                    return True
+                if not self.dry_run:
+                    for table, chain, rule in self._rules(ip):
+                        if self._run_rule(table, '-C', chain, rule).returncode != 0:
+                            if self._run_rule(table, '-I', chain, rule).returncode != 0:
+                                raise RuntimeError('Could not add quarantine rule')
+                            added.append((table, chain, rule))
+                self.quarantined_ips.add(ip)
             return True
-        except Exception as e:
-            logger.error(f"[!] Karantina yönlendirme hatası: {e}")
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            for table, chain, rule in reversed(added):
+                try:
+                    self._run_rule(table, '-D', chain, rule)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            logger.error('Quarantine redirect failed: %s', exc)
             return False
 
     def remove_quarantine_redirect(self, ip):
-        """Karantina yönlendirmesini kaldırır (tüm zincirlerden)."""
+        if self.dry_run:
+            return False
         try:
-            my_ip = None
-            try:
-                result = subprocess.run(['hostname', '-I'], capture_output=True, text=True)
-                my_ip = result.stdout.strip().split()[0]
-            except Exception:
-                pass
-            
-            # Tüm karantina kurallarını temizle
-            subprocess.run(f"iptables -t nat -D PREROUTING -p tcp -s {ip} --dport 80 -j REDIRECT --to-ports {self.port}",
-                         shell=True, capture_output=True)
-            if my_ip:
-                subprocess.run(f"iptables -t nat -D PREROUTING -p tcp -s {ip} --dport 80 -j DNAT --to-destination {my_ip}:{self.port}",
-                             shell=True, capture_output=True)
-            subprocess.run(f"iptables -D FORWARD -s {ip} -p tcp --dport 443 -j DROP",
-                         shell=True, capture_output=True)
-            subprocess.run(f"iptables -D FORWARD -s {ip} -p udp --dport 443 -j REJECT",
-                         shell=True, capture_output=True)
-            subprocess.run(f"iptables -D FORWARD -s {ip} -p tcp --dport 853 -j REJECT",
-                         shell=True, capture_output=True)
-            subprocess.run(f"iptables -D FORWARD -s {ip} -p udp --dport 853 -j REJECT",
-                         shell=True, capture_output=True)
-            
-            for doh_ip in ['8.8.8.8', '8.8.4.4', '1.1.1.1', '1.0.0.1', '9.9.9.9']:
-                subprocess.run(f"iptables -D FORWARD -s {ip} -d {doh_ip} -j REJECT", shell=True, capture_output=True)
-
-            subprocess.run(f"iptables -D FORWARD -s {ip} -p udp --dport 53 -j ACCEPT",
-                         shell=True, capture_output=True)
-            subprocess.run(f"iptables -D FORWARD -s {ip} -p tcp --dport 80 -j ACCEPT",
-                         shell=True, capture_output=True)
-            subprocess.run(f"iptables -D FORWARD -s {ip} -j DROP",
-                         shell=True, capture_output=True)
-            self.quarantined_ips.discard(ip)
-            logger.info(f"[-] IP {ip} karantinası kaldırıldı.")
+            ip = self._address(ip)
+            with self._lock:
+                if not self.dry_run:
+                    for table, chain, rule in self._rules(ip):
+                        if self._run_rule(table, '-C', chain, rule).returncode == 0:
+                            if self._run_rule(table, '-D', chain, rule).returncode != 0:
+                                raise RuntimeError('Could not remove quarantine rule')
+                self.quarantined_ips.discard(ip)
             return True
-        except Exception as e:
-            logger.error(f"[!] Untrap quarantine hatası: {e}")
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            logger.error('Quarantine removal failed: %s', exc)
             return False

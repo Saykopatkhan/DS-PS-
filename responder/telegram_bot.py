@@ -1,7 +1,7 @@
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-import os
+import ipaddress
 
 class TelegramBot:
     """Asenkron Telegram Yönetim Ajanı."""
@@ -19,24 +19,41 @@ class TelegramBot:
         self.event_bus.subscribe('ALERT', self._handle_alert)
         self.event_bus.subscribe('BAN', self._handle_ban)
 
+    def _authorized(self, update):
+        # Configured chat must be present on *every* control update. Matching
+        # private chat IDs also binds the sender; group membership is trusted.
+        return (self.chat_id is not None and update.effective_chat is not None
+                and str(update.effective_chat.id) == str(self.chat_id))
+
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._authorized(update):
+            return
         await update.message.reply_text("🛡️ DS-IPS v5.0 Telegram Yönetim Ajanı Aktif.")
 
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
+        if not self._authorized(update):
+            await query.answer('Yetkisiz işlem', show_alert=True)
+            return
         await query.answer()
-        
-        data = query.data.split(':')
-        action = data[0]
-        ip = data[1] if len(data) > 1 else "Bilinmiyor"
+        action, separator, ip = (query.data or '').partition(':')
+        if not separator or action not in {'ban', 'unban'}:
+            return
+        try:
+            ip = str(ipaddress.IPv4Address(ip))
+        except ValueError:
+            return
         
         if action == "ban":
-            success = self.blocker.block_ip(ip, reason="Telegram Bot üzerinden manuel engelleme")
+            try:
+                success = await asyncio.to_thread(self.blocker.block_ip, ip, reason="Telegram Bot üzerinden manuel engelleme")
+            except ValueError:
+                success = False
             msg = f"🔒 {ip} başarıyla engellendi!" if success else f"⚠️ {ip} zaten engellenmiş."
             await query.edit_message_text(text=query.message.text + f"\n\n👉 Sonuç: {msg}")
             
         elif action == "unban":
-            success = self.blocker.unblock_ip(ip)
+            success = await asyncio.to_thread(self.blocker.unblock_ip, ip)
             msg = f"🔓 {ip} engeli kaldırıldı!" if success else f"⚠️ {ip} engelli değildi."
             await query.edit_message_text(text=query.message.text + f"\n\n👉 Sonuç: {msg}")
 
@@ -47,8 +64,8 @@ class TelegramBot:
             
         try:
             source_ip = event.get('source_ip', 'Bilinmiyor')
-            alert_type = event.get('type', 'Bilinmiyor')
-            details = event.get('details', '')
+            alert_type = event.get('alert_type', event.get('type', 'Bilinmiyor'))
+            details = event.get('description', event.get('details', ''))
             
             keyboard = [
                 [
@@ -61,9 +78,8 @@ class TelegramBot:
             message = f"🚨 *YENİ ALARM* 🚨\n\n*Tür:* {alert_type}\n*Kaynak IP:* `{source_ip}`\n*Detay:* {details}"
             
             await self.app.bot.send_message(
-                chat_id=self.chat_id, 
-                text=message, 
-                parse_mode='Markdown',
+                chat_id=self.chat_id,
+                text=message,
                 reply_markup=reply_markup
             )
         except Exception as e:
@@ -76,7 +92,7 @@ class TelegramBot:
             ip = event.get('ip')
             reason = event.get('reason')
             message = f"🛑 *OTOMATİK ENGELLEME* 🛑\n\n*IP:* `{ip}`\n*Neden:* {reason}"
-            await self.app.bot.send_message(chat_id=self.chat_id, text=message, parse_mode='Markdown')
+            await self.app.bot.send_message(chat_id=self.chat_id, text=message)
         except Exception:
             pass
 
@@ -91,9 +107,9 @@ class TelegramBot:
             print(f"[!] Telegram Bot başlatılamadı: {e}")
             
     async def stop(self):
-        try:
-            await self.app.updater.stop()
-            await self.app.stop()
-            await self.app.shutdown()
-        except Exception:
-            pass
+        # Stop each component independently even after partial initialization.
+        for operation in (self.app.updater.stop, self.app.stop, self.app.shutdown):
+            try:
+                await operation()
+            except RuntimeError:
+                pass

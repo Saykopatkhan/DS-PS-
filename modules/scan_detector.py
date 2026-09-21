@@ -9,7 +9,7 @@
 Port Scan tespit modülü (SYN, FIN, XMAS, NULL, UDP).
 """
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from scapy.all import TCP, UDP, IP
 import psutil
 from core.database import Database
@@ -29,11 +29,13 @@ class ScanDetector:
         self.xmas_count = defaultdict(lambda: defaultdict(int))
         self.null_count = defaultdict(lambda: defaultdict(int))
         self.udp_count = defaultdict(lambda: defaultdict(int))
-        self.connection_timestamps = defaultdict(list)
+        self.connection_timestamps = defaultdict(lambda: deque(maxlen=2001))
         self.scan_threshold = 15
         self.time_window = 5.0
         self.last_cleanup = time.time()
         self.last_flood_alert = defaultdict(float)
+        self._alerted_scans = set()
+        self._scan_slots = threading.BoundedSemaphore(2)
         
         self.local_ips = self._get_local_ips()
 
@@ -80,8 +82,9 @@ class ScanDetector:
                     self.null_count[src_ip][dst_port] += 1
                     self._check_null_scan(src_ip)
                     
-                self.connection_timestamps[src_ip].append(time.time())
-                self._check_flood(src_ip)
+                if flags & 0x02 and not flags & 0x10:
+                    self.connection_timestamps[src_ip].append(time.time())
+                    self._check_flood(src_ip)
                 
             elif packet.haslayer(UDP):
                 src_port = packet[UDP].sport
@@ -97,8 +100,9 @@ class ScanDetector:
         """DoS / Flood tespiti (Aynı IP'den aşırı paket gelmesi)."""
         # Son 1 saniyedeki paket sayısını kontrol et
         current_time = time.time()
-        recent_packets = [t for t in self.connection_timestamps[src_ip] if current_time - t < 1.0]
-        self.connection_timestamps[src_ip] = recent_packets
+        recent_packets = self.connection_timestamps[src_ip]
+        while recent_packets and current_time - recent_packets[0] >= 1.0:
+            recent_packets.popleft()
         
         if len(recent_packets) > 2000: # Saniyede 2000 paket DoS kabul edilir
             if current_time - self.last_flood_alert[src_ip] > 5.0: # Her 5 saniyede bir alarm ver (Spam engelleme)
@@ -115,7 +119,8 @@ class ScanDetector:
 
     def _check_syn_scan(self, src_ip):
         """SYN Scan tespiti."""
-        if len(self.syn_count[src_ip]) > self.scan_threshold:
+        if len(self.syn_count[src_ip]) > self.scan_threshold and ('syn', src_ip) not in self._alerted_scans:
+            self._alerted_scans.add(('syn', src_ip))
             ports = list(self.syn_count[src_ip].keys())[:10]
             self.db.add_alert(
                 alert_type='SYN Scan',
@@ -126,12 +131,12 @@ class ScanDetector:
             )
             if self.blocker and self.auto_ban:
                 self.blocker.block_ip(src_ip)
-            if self.auto_vuln_scan_cb:
-                threading.Thread(target=self.auto_vuln_scan_cb, args=(src_ip,)).start()
+            self._schedule_scan(src_ip)
 
     def _check_fin_scan(self, src_ip):
         """FIN Scan tespiti."""
-        if len(self.fin_count[src_ip]) > self.scan_threshold:
+        if len(self.fin_count[src_ip]) > self.scan_threshold and ('fin', src_ip) not in self._alerted_scans:
+            self._alerted_scans.add(('fin', src_ip))
             self.db.add_alert(
                 alert_type='FIN Scan',
                 src_ip=src_ip, src_mac='N/A',
@@ -144,7 +149,8 @@ class ScanDetector:
 
     def _check_xmas_scan(self, src_ip):
         """XMAS Scan tespiti."""
-        if len(self.xmas_count[src_ip]) > self.scan_threshold:
+        if len(self.xmas_count[src_ip]) > self.scan_threshold and ('xmas', src_ip) not in self._alerted_scans:
+            self._alerted_scans.add(('xmas', src_ip))
             self.db.add_alert(
                 alert_type='XMAS Scan',
                 src_ip=src_ip, src_mac='N/A',
@@ -154,12 +160,12 @@ class ScanDetector:
             )
             if self.blocker and self.auto_ban:
                 self.blocker.block_ip(src_ip)
-            if self.auto_vuln_scan_cb:
-                threading.Thread(target=self.auto_vuln_scan_cb, args=(src_ip,)).start()
+            self._schedule_scan(src_ip)
 
     def _check_null_scan(self, src_ip):
         """NULL Scan tespiti."""
-        if len(self.null_count[src_ip]) > self.scan_threshold:
+        if len(self.null_count[src_ip]) > self.scan_threshold and ('null', src_ip) not in self._alerted_scans:
+            self._alerted_scans.add(('null', src_ip))
             self.db.add_alert(
                 alert_type='NULL Scan',
                 src_ip=src_ip, src_mac='N/A',
@@ -172,7 +178,8 @@ class ScanDetector:
 
     def _check_udp_scan(self, src_ip):
         """UDP Scan tespiti."""
-        if len(self.udp_count[src_ip]) > self.scan_threshold:
+        if len(self.udp_count[src_ip]) > self.scan_threshold and ('udp', src_ip) not in self._alerted_scans:
+            self._alerted_scans.add(('udp', src_ip))
             self.db.add_alert(
                 alert_type='UDP Scan',
                 src_ip=src_ip, src_mac='N/A',
@@ -183,15 +190,29 @@ class ScanDetector:
             if self.blocker and self.auto_ban:
                 self.blocker.block_ip(src_ip)
 
+    def _schedule_scan(self, src_ip):
+        if not self.auto_vuln_scan_cb or getattr(self.blocker, 'dry_run', False):
+            return
+        if not self._scan_slots.acquire(blocking=False):
+            return
+        def run():
+            try:
+                self.auto_vuln_scan_cb(src_ip)
+            finally:
+                self._scan_slots.release()
+        threading.Thread(target=run, daemon=True).start()
+
     def _cleanup(self):
         """Eski verileri temizler."""
-        if time.time() - self.last_cleanup > self.time_window * 2:
+        if time.time() - self.last_cleanup > self.time_window:
             self.syn_count.clear()
             self.fin_count.clear()
             self.xmas_count.clear()
             self.null_count.clear()
             self.udp_count.clear()
             self.connection_timestamps.clear()
+            self.last_flood_alert.clear()
+            self._alerted_scans.clear()
             self.last_cleanup = time.time()
 
     def get_stats(self) -> dict:

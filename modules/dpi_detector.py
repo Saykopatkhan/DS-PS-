@@ -13,7 +13,10 @@ Tersine bağlantı (Reverse Shell) veya komut satırı izlerini yakalar.
 import base64
 import urllib.parse
 import re
-import yara
+try:
+    import yara
+except ImportError:
+    yara = None
 from scapy.all import IP, TCP, Raw
 
 class DPIDetector:
@@ -53,7 +56,7 @@ class DPIDetector:
         }
         """
         try:
-            self.yara_compiled = yara.compile(source=yara_rules)
+            self.yara_compiled = yara.compile(source=yara_rules) if yara else None
         except Exception as e:
             print(f"YARA derleme hatası: {e}")
             self.yara_compiled = None

@@ -1,565 +1,75 @@
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; font-src https://fonts.gstatic.com; connect-src 'self' ws: wss: http://ip-api.com; img-src 'self' data: blob: https://*.basemaps.cartocdn.com https://unpkg.com https://*.tile.openstreetmap.org;">
-    <title>DS IPS - Ağ Saldırı Tespit & Önleme Paneli</title>
-    <meta name="description" content="DS IPS - Gerçek zamanlı ağ saldırı tespit ve önleme sistemi dashboard paneli">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/leaflet.css') }}" />
-    <script src="{{ url_for('static', filename='js/leaflet.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-    <div class="bg-grid"></div>
-    <!-- HEADER -->
-    <header class="header">
-        <div class="header-left">
-            <div class="logo">
-                <span class="logo-icon">🇹🇷</span>
-                <h1>DS <span class="accent">IPS</span></h1>
-            </div>
-            <span class="subtitle">Ağ Saldırı Tespit & Önleme Sistemi</span>
-            
-            <!-- Ses ve PCAP Kontrolleri (Faz 3) -->
-            <div class="sound-control" style="margin-left: 20px; border-left: 1px solid var(--border); padding-left: 20px;">
-                <button id="sound-toggle-btn" class="btn btn-sm" onclick="toggleSound()" title="Sesi Aç/Kapat">
-                    🔊
-                </button>
-                <input type="range" id="volume-slider" class="volume-slider" min="0" max="1" step="0.1" value="0.5" style="width: 60px;">
-            </div>
-            <div class="pcap-indicator" style="margin-left: 15px;" title="PCAP Kayıt Durumu">
-                <span id="pcap-status-dot" class="pcap-dot ready"></span>
-                <span style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);">PCAP</span>
-            </div>
-        </div>
-        <div class="header-right">
-            <div class="status-badge" id="status-badge">
-                <span class="status-dot"></span>
-                <span class="status-text">Bağlanıyor...</span>
-            </div>
-            <div class="mode-badge" id="mode-badge">IDS</div>
-            <button class="btn btn-sm header-btn premium" style="margin-left:10px; background-color: #d4af37; color: #000; border-color: #d4af37;" onclick="window.location.href='/soc_premium'">👑 Premium SOC</button>
-            <button class="btn btn-sm header-btn" style="margin-left:10px;" onclick="window.location.href='/api/export/alerts'">Rapor İndir</button>
-            <button class="btn btn-sm header-btn" style="margin-left:10px;" onclick="openSettings()">⚙️ Ayarlar</button>
-            <button class="btn btn-sm header-btn" style="margin-left:10px; background: #c8102e; color: #fff; border-color: #c8102e;" onclick="window.location.href='/logout'">🚪 Çıkış</button>
-        </div>
-    </header>
-
-    <main class="dashboard">
-        <!-- STATS ROW -->
-        <section class="stats-row">
-            <div class="stat-card">
-                <div class="stat-icon">⚠️</div>
-                <div class="stat-info">
-                    <span class="stat-value" id="total-alerts">0</span>
-                    <span class="stat-label">Toplam Alarm</span>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon">🚫</div>
-                <div class="stat-info">
-                    <span class="stat-value" id="active-bans">0</span>
-                    <span class="stat-label">Aktif Ban</span>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon">💻</div>
-                <div class="stat-info">
-                    <span class="stat-value" id="cpu-usage">0%</span>
-                    <span class="stat-label">CPU Yükü</span>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon">🧠</div>
-                <div class="stat-info">
-                    <span class="stat-value" id="ram-usage">0%</span>
-                    <span class="stat-label">RAM Kullanımı</span>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon">⏱️</div>
-                <div class="stat-info">
-                    <span class="stat-value" id="uptime">00:00:00</span>
-                    <span class="stat-label">Çalışma Süresi</span>
-                </div>
-            </div>
-            <div class="stat-card" style="border-left: 2px solid #f59e0b;">
-                <div class="stat-icon">🛡️</div>
-                <div class="stat-info">
-                    <span class="stat-value" id="hids-alerts">0</span>
-                    <span class="stat-label">HIDS/WAF Alarm</span>
-                </div>
-            </div>
-            <div class="stat-card" style="border-left: 2px solid #ef4444;">
-                <div class="stat-icon">🔥</div>
-                <div class="stat-info">
-                    <span class="stat-value" id="ipset-blocks">0</span>
-                    <span class="stat-label">ipset Engel</span>
-                </div>
-            </div>
-        </section>
-
-        <!-- SOC CHARTS AND MAP ROW -->
-        <section class="soc-row" style="margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-            <!-- Siber Tehdit Gözetleme -->
-            <div class="soc-panel" style="background: rgba(10,15,29,0.8); border-radius: 16px; border: 1px solid var(--border); padding: 16px; box-sizing: border-box;">
-                <div class="panel-header" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
-                    <h2 style="margin:0; font-size:1rem;">🌍 Siber Tehdit Gözetleme</h2>
-                    <div style="display:flex; gap:6px;">
-                        <button class="btn btn-sm soc-tab active" id="tab-radar" onclick="switchMapTab('radar')">📡 Radar</button>
-                        <button class="btn btn-sm soc-tab" id="tab-geo" onclick="switchMapTab('geo')">🗺️ Coğrafi</button>
-                    </div>
-                </div>
-                <!-- Canvas Radar -->
-                <div id="radar-view" style="display: block; width: 100%; height: 380px; position: relative; background: #020d18; border-radius: 12px; border: 1px solid rgba(0,255,160,0.2); overflow: hidden;">
-                    <canvas id="radar-canvas" style="display:block; width:100%; height:100%;"></canvas>
-                    <div id="radar-blips-container" style="position: absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></div>
-                    <div style="position:absolute; bottom:8px; right:10px; color:#00ffa0; font-family:var(--font-mono); font-size:9px; text-shadow: 0 0 8px #00ffa0; letter-spacing:2px;">● RADAR AKTİF</div>
-                    <div style="position:absolute; top:8px; left:10px; color:#00ffa0; font-family:var(--font-mono); font-size:9px; opacity:0.6;">DS-IPS TEHDIT İZLEME v3.0</div>
-                </div>
-                <!-- Coğrafi Harita (Leaflet) -->
-                <div id="geo-view" style="display: none; width: 100%; height: 380px; border-radius: 12px; border: 1px solid rgba(0,255,160,0.2); overflow: hidden; position: relative;">
-                    <div id="leaflet-map" style="width:100%; height:380px; background:#0a1628;"></div>
-                </div>
-            </div>
-
-            <!-- Gelişmiş Risk Merkezi -->
-            <div class="soc-panel" style="background: rgba(10,15,29,0.8); border-radius: 16px; border: 1px solid var(--border); padding: 16px; box-sizing: border-box;">
-                <div class="panel-header" style="margin-bottom: 12px;">
-                    <h2 style="margin:0; font-size:1rem;">📊 Gelişmiş Risk Merkezi</h2>
-                </div>
-                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 380px; gap: 16px;">
-                    <!-- Risk Gauge -->
-                    <div style="position: relative; width: 220px; height: 220px; flex-shrink:0;">
-                        <canvas id="alertChart" style="width:220px; height:220px;"></canvas>
-                        <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center; pointer-events:none;">
-                            <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:2px; margin-bottom:2px;">Risk Skoru</div>
-                            <div id="main-risk-score" style="font-size:2.8rem; font-weight:900; font-family:var(--font-mono); color:#00ffa0; text-shadow: 0 0 20px #00ffa0; line-height:1;">0</div>
-                            <div id="risk-trend" style="font-size:0.75rem; color:#00ffa0; margin-top:4px;">Sistem Güvenli</div>
-                        </div>
-                    </div>
-                    <!-- CPU / RAM Göstergesi -->
-                    <div style="width:100%; display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-                        <div style="background:rgba(0,255,160,0.07); border-radius:10px; border:1px solid rgba(0,255,160,0.2); padding:12px; text-align:center;">
-                            <div style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px;">💻 CPU</div>
-                            <div id="cpu-gauge" style="font-size:1.6rem; font-weight:800; font-family:var(--font-mono); color:#00ffa0;">0%</div>
-                            <div style="height:4px; background:#1a2a3a; border-radius:2px; margin-top:6px; overflow:hidden;">
-                                <div id="cpu-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#00ffa0,#00ccff); border-radius:2px; transition:width 0.5s;"></div>
-                            </div>
-                        </div>
-                        <div style="background:rgba(0,200,255,0.07); border-radius:10px; border:1px solid rgba(0,200,255,0.2); padding:12px; text-align:center;">
-                            <div style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px;">🧠 RAM</div>
-                            <div id="ram-gauge" style="font-size:1.6rem; font-weight:800; font-family:var(--font-mono); color:#00ccff;">0%</div>
-                            <div style="height:4px; background:#1a2a3a; border-radius:2px; margin-top:6px; overflow:hidden;">
-                                <div id="ram-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#00ccff,#7000ff); border-radius:2px; transition:width 0.5s;"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- MODULE CARDS ROW -->
-        <section class="modules-row">
-            <div class="module-card" id="arp-module">
-                <div class="module-header">
-                    <span class="module-icon">🔗</span>
-                    <h3>ARP Detektörü</h3>
-                </div>
-                <div class="module-stats">
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="arp-requests">0</span>
-                        <span class="module-stat-label">Request</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="arp-replies">0</span>
-                        <span class="module-stat-label">Reply</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="arp-gratuitous">0</span>
-                        <span class="module-stat-label">Gratuitous</span>
-                    </div>
-                </div>
-                <div class="module-footer">
-                    <span class="module-status active">Aktif</span>
-                </div>
-            </div>
-
-            <div class="module-card" id="scan-module">
-                <div class="module-header">
-                    <span class="module-icon">🔍</span>
-                    <h3>Tarama Detektörü</h3>
-                </div>
-                <div class="module-stats">
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="scan-syn">0</span>
-                        <span class="module-stat-label">SYN</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="scan-fin">0</span>
-                        <span class="module-stat-label">FIN</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="scan-xmas">0</span>
-                        <span class="module-stat-label">XMAS</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="scan-null">0</span>
-                        <span class="module-stat-label">NULL</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="scan-udp">0</span>
-                        <span class="module-stat-label">UDP</span>
-                    </div>
-                </div>
-                <div class="module-footer">
-                    <span class="module-status active">Aktif</span>
-                </div>
-            </div>
-
-            <div class="module-card" id="wifi-module">
-                <div class="module-header">
-                    <span class="module-icon">📡</span>
-                    <h3>WiFi Detektörü</h3>
-                </div>
-                <div class="module-stats">
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="wifi-deauth">0</span>
-                        <span class="module-stat-label">Deauth</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="wifi-beacon">0</span>
-                        <span class="module-stat-label">Beacon</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="wifi-evil-twin">0</span>
-                        <span class="module-stat-label">Evil Twin</span>
-                    </div>
-                </div>
-                <div class="module-footer">
-                    <span class="module-status" id="wifi-status">Pasif</span>
-                </div>
-            </div>
-
-            <!-- Anti-MITM Healing Modül Kartı -->
-            <div class="module-card healing-card" id="healing-module">
-                <div class="module-header">
-                    <span class="module-icon">🛡️</span>
-                    <h3>Anti-MITM Onarım</h3>
-                </div>
-                <div class="module-stats">
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="healing-count">0</span>
-                        <span class="module-stat-label">Onarılan Cihaz</span>
-                    </div>
-                </div>
-                <div class="module-footer" style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-                    <div class="healing-indicator" id="healing-indicator" style="font-size: 1.2rem; filter: grayscale(100%); transition: all 0.3s;">❤️‍🩹</div>
-                    <span class="module-status active">Hazır</span>
-                </div>
-            </div>
-        </section>
-
-        <!-- V5.0 MODULES ROW -->
-        <section class="modules-row" style="margin-top: 0;">
-            <div class="module-card" id="hids-module" style="border-top: 2px solid #f59e0b;">
-                <div class="module-header">
-                    <span class="module-icon">🛡️</span>
-                    <h3>HIDS / WAF Motoru</h3>
-                </div>
-                <div class="module-stats">
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="hids-sqli">0</span>
-                        <span class="module-stat-label">SQLi</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="hids-rce">0</span>
-                        <span class="module-stat-label">RCE</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="hids-lfi">0</span>
-                        <span class="module-stat-label">LFI</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="hids-ssh">0</span>
-                        <span class="module-stat-label">SSH Brute</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="hids-scanner">0</span>
-                        <span class="module-stat-label">Scanner</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="hids-xss">0</span>
-                        <span class="module-stat-label">XSS</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="hids-ddos">0</span>
-                        <span class="module-stat-label">HTTP DDoS</span>
-                    </div>
-                </div>
-                <div class="module-footer">
-                    <span class="module-status active" id="hids-status">Aktif</span>
-                </div>
-            </div>
-
-            <div class="module-card" id="ipset-module" style="border-top: 2px solid #ef4444;">
-                <div class="module-header">
-                    <span class="module-icon">🔥</span>
-                    <h3>ipset Güvenlik Duvarı</h3>
-                </div>
-                <div class="module-stats">
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="ipset-total">0</span>
-                        <span class="module-stat-label">Toplam Engel</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="ipset-active">0</span>
-                        <span class="module-stat-label">Aktif</span>
-                    </div>
-                </div>
-                <div class="module-footer">
-                    <span class="module-status active">O(1) Kernel</span>
-                </div>
-            </div>
-
-            <div class="module-card" id="telegram-module" style="border-top: 2px solid #3b82f6;">
-                <div class="module-header">
-                    <span class="module-icon">📲</span>
-                    <h3>Telegram C2 Bot</h3>
-                </div>
-                <div class="module-stats">
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="tg-sent">0</span>
-                        <span class="module-stat-label">Gönderilen</span>
-                    </div>
-                    <div class="module-stat">
-                        <span class="module-stat-value" id="tg-commands">0</span>
-                        <span class="module-stat-label">Komut</span>
-                    </div>
-                </div>
-                <div class="module-footer">
-                    <span class="module-status" id="tg-status" style="color: #8892b0;">Bağlantı Bekleniyor</span>
-                </div>
-            </div>
-        </section>
-
-        <!-- NETWORK MAP ROW -->
-        <section class="map-row" style="margin-top: 20px;">
-            <div class="map-panel" style="background-color: #112240; border-radius: 8px; border: 1px solid #233554; padding: 20px;">
-                <div class="panel-header" style="margin-bottom: 10px;">
-                    <h2>🕸️ Canlı Ağ Haritası</h2>
-                </div>
-                <div id="network-map" style="width: 100%; height: 400px; background-color: #0a192f; border-radius: 4px; border: 1px solid #1d2d50;"></div>
-                <!-- Context Menu -->
-                <div id="map-context-menu" style="display: none; position: absolute; background: rgba(15, 23, 42, 0.95); border: 1px solid #ff4444; border-radius: 8px; padding: 10px; z-index: 1000; box-shadow: 0 4px 15px rgba(0,0,0,0.8); backdrop-filter: blur(10px);">
-                    <div id="context-header" style="color: #e2e8f0; margin-bottom: 10px; font-weight: bold; font-family: var(--font-mono); font-size: 0.9rem;"></div>
-                    <button id="btn-context-ban" class="btn btn-sm btn-danger" style="width: 100%; margin-bottom: 5px;">🔥 Manuel İzole Et (Ban)</button>
-                    <button class="btn btn-sm btn-secondary" style="width: 100%;" onclick="document.getElementById('map-context-menu').style.display='none'">İptal</button>
-                </div>
-            </div>
-        </section>
-
-        <!-- GENERAL TRAFFIC MONITOR (DS-IPS V2) -->
-        <section class="traffic-row" style="margin-top: 20px;">
-            <div class="traffic-panel" style="background-color: #112240; border-radius: 8px; border: 1px solid #233554; padding: 20px;">
-                <div class="panel-header" style="margin-bottom: 10px;">
-                    <h2><i class="fas fa-eye"></i> Genel Ağ Gözetleme (Aktif Cihazlar)</h2>
-                    <button class="btn btn-sm" onclick="fetchRecordsForTrafficList()">Yenile</button>
-                </div>
-                <div style="height: 300px; overflow-y: auto; background-color: #0a192f; border-radius: 4px; border: 1px solid #1d2d50;">
-                    <table style="width:100%; border-collapse:collapse; color:#e2e8f0; font-family:var(--font-mono); font-size:14px;">
-                        <thead>
-                            <tr style="border-bottom:1px solid #233554; text-align:left;">
-                                <th style="padding:10px; color:#64ffda;">Cihaz IP / MAC</th>
-                                <th style="padding:10px; color:#64ffda; text-align:right;">İşlem</th>
-                            </tr>
-                        </thead>
-                        <tbody id="general-traffic-body">
-                            <tr><td colspan="2" style="text-align:center; padding:15px; color:#8892b0;">Taramayı başlatın veya cihazları bekleyin...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </section>
-
-        <!-- MAIN CONTENT: ALERTS + SIDEBAR -->
-        <section class="content-row" style="margin-top: 20px;">
-            <!-- ALERT FEED -->
-            <div class="alerts-panel">
-                <div class="panel-header">
-                    <h2>🔔 Canlı Alarm Akışı</h2>
-                    <div class="alert-filters">
-                        <button class="btn btn-sm filter-btn active" onclick="filterAlerts('all')">Tümü</button>
-                        <button class="btn btn-sm filter-btn" onclick="filterAlerts('critical')" style="color: var(--danger);">Kritik</button>
-                        <button class="btn btn-sm filter-btn" onclick="filterAlerts('warning')" style="color: var(--warning);">Uyarı</button>
-                    </div>
-                    <button class="btn btn-sm" id="clear-alerts-btn" onclick="clearAlertFeed()">Temizle</button>
-                </div>
-                <div class="alerts-list" id="alerts-list">
-                    <div class="alert-empty">
-                        <span>Henüz alarm yok. Sistem başlatıldığında alarmlar burada görünecek.</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- SIDEBAR -->
-            <div class="sidebar">
-                <!-- CONTROL PANEL -->
-                <div class="control-panel">
-                    <div class="panel-header">
-                        <h2>⚙️ Kontrol Paneli</h2>
-                    </div>
-                    <div class="control-body">
-                        <div class="control-group">
-                            <label>Ağ Arayüzü</label>
-                            <input type="text" id="interface-input" value="{{ current_interface|default('eth0') }}" class="input-field" placeholder="eth0, wlan0...">
-                        </div>
-                        <div class="control-buttons">
-                            <button class="btn btn-success" id="start-btn" onclick="startSniffer()">▶ Başlat</button>
-                            <button class="btn btn-danger" id="stop-btn" onclick="stopSniffer()" disabled>⏹ Durdur</button>
-                        </div>
-                        <hr style="border-color: rgba(255,215,0,0.15); margin: 12px 0;">
-                        <div class="control-group">
-                            <label>🌐 Ağ Geçidi Modu (Gateway)</label>
-                            <p style="font-size:11px; color:#8892b0; margin:4px 0 8px;">Aktifleştirildiğinde cihazlarınızda gateway olarak Kali IP'sini ayarlayın. Tüm trafik IPS üzerinden geçer.</p>
-                            <button class="btn" id="gateway-mode-btn" onclick="toggleGatewayMode()" style="background: rgba(0,255,160,0.1); border:1px solid #00ffa0; color:#00ffa0; width:100%; font-weight:bold;">
-                                🌐 Ağ Geçidi Modunu Aç/Kapat
-                            </button>
-                            <button class="btn" id="dhcp-mode-btn" onclick="toggleDHCP()" style="background: rgba(255,50,50,0.1); border:1px solid #ff3232; color:#ff3232; width:100%; font-weight:bold; margin-top:8px;">
-                                ☠️ Ağ Kill Switch (DHCP)
-                            </button>
-                            <p id="dhcp-status-text" style="font-size:10px; color:#64748b; margin:4px 0 0; display:none;"></p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- BAN MANAGEMENT -->
-                <div class="ban-panel">
-                    <div class="panel-header">
-                        <h2>🚫 Aktif Engellemeler</h2>
-                    </div>
-                    <div class="ban-form" style="display:none;">
-                        <input type="text" id="ban-ip" class="input-field" placeholder="IP Adresi">
-                        <input type="text" id="ban-mac" class="input-field" placeholder="MAC Adresi">
-                        <input type="text" id="ban-reason" class="input-field" placeholder="Neden">
-                        <button class="btn btn-danger btn-full" onclick="addBan()">Engelle</button>
-                    </div>
-                    <div class="ban-list" id="ban-list">
-                        <div class="ban-empty">Aktif ban bulunmuyor.</div>
-                    </div>
-                </div>
-
-                <!-- ACTIVE DEFENSE PANEL -->
-                <div class="active-defense-panel" style="background-color: #112240; border-radius: 8px; border: 1px solid #ff4757; padding: 15px; margin-top: 15px;">
-                    <div class="panel-header" style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
-                        <h2 style="color: #ff4757; margin: 0; font-size: 1.1rem;">🛡️ Aktif Savunma</h2>
-                        <div style="display:flex; gap:5px;">
-                            <button class="btn btn-sm" onclick="openDNSBlocklist()">DNS Listesi</button>
-                            <button class="btn btn-sm btn-danger" onclick="cleanupActiveDefense()">Temizle</button>
-                        </div>
-                    </div>
-                    <div class="defense-list" id="active-defense-list" style="max-height: 200px; overflow-y: auto;">
-                        <div class="ban-empty">Aktif savunma kuralı yok.</div>
-                    </div>
-                </div>
-
-                <!-- NETWORK DEVICES SCANNER -->
-                <div class="scanner-panel">
-                    <div class="panel-header">
-                        <h2>📡 Ağdaki Cihazlar</h2>
-                        <button class="btn btn-sm btn-primary" id="scan-btn" onclick="runNetworkScan()">Taramayı Başlat</button>
-                    </div>
-                    <div class="scanner-list" id="scanner-list">
-                        <div class="ban-empty">Cihazları görmek için taramayı başlatın.</div>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </main>
-
-    <!-- SETTINGS MODAL -->
-    <div id="settings-modal" class="modal" style="display:none; position:fixed; z-index:2000; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.7);">
-        <div class="modal-content" style="background-color:#112240; margin:10% auto; padding:20px; border:1px solid #233554; border-radius:8px; width:400px; color:#e6f1ff;">
-            <h2 style="margin-top:0;">Dış Bildirim Ayarları</h2>
-            <div class="control-group" style="margin-top:15px;">
-                <label style="color:#8892b0;">Discord Webhook URL:</label>
-                <input type="text" id="setting-discord" class="input-field" placeholder="https://discord.com/api/webhooks/..." style="width:100%; margin-top:5px; box-sizing:border-box;">
-            </div>
-            <div class="control-group" style="margin-top:15px;">
-                <label style="color:#8892b0;">Telegram Bot Token:</label>
-                <input type="text" id="setting-telegram-token" class="input-field" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" style="width:100%; margin-top:5px; box-sizing:border-box;">
-            </div>
-            <div class="control-group" style="margin-top:15px;">
-                <label style="color:#8892b0;">Telegram Chat ID:</label>
-                <input type="text" id="setting-telegram-chat" class="input-field" placeholder="-100123456789" style="width:100%; margin-top:5px; box-sizing:border-box;">
-            </div>
-            <div style="margin-top:20px; display:flex; justify-content:flex-end; gap:10px;">
-                <button class="btn btn-sm" onclick="closeSettings()">İptal</button>
-                <button class="btn btn-sm btn-success" onclick="saveSettings()">Kaydet</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- DNS BLOCKLIST MODAL -->
-    <div id="dns-blocklist-modal" class="modal" style="display:none; position:fixed; z-index:2000; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.7);">
-        <div class="modal-content" style="background-color:#112240; margin:10% auto; padding:20px; border:1px solid #233554; border-radius:8px; width:500px; color:#e6f1ff;">
-            <h2 style="margin-top:0;">DNS Sinkhole Blocklist</h2>
-            <p style="color:#8892b0; font-size:14px;">Her satıra bir domain yazın (ör: malware.com). Bu domainlere giden istekler karantina sayfasına yönlendirilir.</p>
-            <div class="control-group" style="margin-top:15px;">
-                <textarea id="dns-blocklist-textarea" class="input-field" rows="10" style="width:100%; margin-top:5px; box-sizing:border-box; font-family:monospace; resize:vertical;"></textarea>
-            </div>
-            <div style="margin-top:20px; display:flex; justify-content:flex-end; gap:10px;">
-                <button class="btn btn-sm" onclick="document.getElementById('dns-blocklist-modal').style.display='none'">İptal</button>
-                <button class="btn btn-sm btn-success" onclick="saveDNSBlocklist()">Kaydet</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- TRAFFIC MONITOR MODAL (DS-IPS V2) -->
-    <div id="traffic-modal" class="modal" style="display:none; position:fixed; z-index:2000; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.85); backdrop-filter:blur(5px);">
-        <div class="modal-content" style="background-color:#0a192f; border:1px solid #64ffda; border-radius:12px; margin:5% auto; width:80%; max-width:800px; max-height:80vh; display:flex; flex-direction:column; box-shadow: 0 0 30px rgba(100,255,218,0.2);">
-            <div style="padding:20px; border-bottom:1px solid #1d2d50; display:flex; justify-content:space-between; align-items:center;">
-                <h2 style="margin:0; color:#64ffda; font-family:var(--font-mono);"><i class="fas fa-eye"></i> Ağ Gözetleme (Traffic Monitor) - <span id="traffic-ip">IP</span></h2>
-                <button onclick="closeTrafficModal()" style="background:none; border:none; color:#ff4444; font-size:24px; cursor:pointer;">&times;</button>
-            </div>
-            <div style="padding:20px; flex-grow:1; overflow-y:auto;">
-                <div style="margin-bottom:15px; color:#8892b0; font-size:14px;">
-                    <i class="fas fa-info-circle"></i> Bu panel cihazın ziyaret ettiği domainleri ve sunucuları (DNS/SNI) canlı olarak gösterir.
-                </div>
-                <table style="width:100%; border-collapse:collapse; color:#e2e8f0; font-family:var(--font-mono); font-size:14px;">
-                    <thead>
-                        <tr style="border-bottom:1px solid #233554; text-align:left;">
-                            <th style="padding:10px; color:#64ffda;">Zaman</th>
-                            <th style="padding:10px; color:#64ffda;">Domain / Hedef</th>
-                            <th style="padding:10px; color:#64ffda;">Tip</th>
-                        </tr>
-                    </thead>
-                    <tbody id="traffic-table-body">
-                        <!-- Traffic logs will be inserted here dynamically -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <footer class="footer">
-        <span>DS IPS v1.0 | Ağ Saldırı Tespit & Önleme Sistemi</span>
-    </footer>
-
-    <script src="{{ url_for('static', filename='vis-network.min.js') }}"></script>
-    <script src="{{ url_for('static', filename='socket.io.min.js') }}"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=2.4"></script>
-    
-    <!-- PCAP Download Extension & SOC Dashboard Enhancements -->
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            if(window.fetchActiveDefenseRules) window.fetchActiveDefenseRules();
-        });
-    </script>
-</body>
-</html>
+{% extends 'base.html' %}
+{% from 'components.html' import icon, panel_head %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/leaflet.css') }}">{% endblock %}
+{% block content %}
+<section id="overview" class="page-section">
+  <div class="page-heading" data-reveal>
+    <div><div class="eyebrow"><span class="eyebrow-line"></span> GÜVENLİK OPERASYONLARI</div><h1>Ağınızın tamamı.<br class="mobile-break"> Tek bir bakışta.</h1><p>Güvenlik olaylarını izleyin, ağınızı anlayın ve tehditlere müdahale edin.</p></div>
+    <div class="heading-actions"><a class="btn" href="/api/export/alerts">{{ icon('download') }} Rapor indir</a><a class="btn btn-primary" href="#defense">{{ icon('settings') }} Sistemi yönet</a></div>
+  </div>
+  <div class="overview-strip" data-reveal><div class="strip-group"><div class="status-badge" id="status-badge" role="status"><span class="status-dot"></span><span class="status-text">Bağlanıyor…</span></div><span class="strip-divider"></span><span class="mode-badge" id="mode-badge">—</span><span class="subtle">Arayüz <b class="mono" id="interface-name">{{ current_interface }}</b></span></div><span class="subtle update-time" id="last-updated">Veri bekleniyor</span></div>
+  <div class="stats-row" data-reveal>
+    {% for id, label, glyph, note in [('total-alerts','Toplam alarm','bell','Kaydedilen güvenlik olayları'),('active-bans','Aktif engelleme','shield','Uygulanan erişim kısıtlamaları'),('hids-alerts','HIDS / WAF olayları','activity','Sunucu ve uygulama güvenliği'),('ipset-blocks','Güvenlik duvarı','lock','ipset engelleme sayısı')] %}
+    <article class="stat-card"><div class="stat-top"><span class="stat-label">{{ label }}</span><span class="stat-icon">{{ icon(glyph) }}</span></div><span class="stat-value" id="{{ id }}">0</span><div class="stat-note"><span class="tiny-line"></span>{{ note }}</div></article>
+    {% endfor %}
+  </div>
+  <div class="soc-row">
+    <article class="panel radar-panel" data-reveal>
+      <div class="panel-header">{{ panel_head('Tehdit görünürlüğü', 'Ağ olaylarının anlık görünümü') }}<div class="segmented" role="group" aria-label="Harita görünümü"><button class="soc-tab active" id="tab-radar" onclick="switchMapTab('radar')" aria-pressed="true">Radar</button><button class="soc-tab" id="tab-geo" onclick="switchMapTab('geo')" aria-pressed="false">Coğrafi</button></div></div>
+      <div id="radar-view" class="radar-view"><canvas id="radar-canvas" role="img" aria-label="Güvenlik olay radarı. Konumlar temsilidir; olay ayrıntıları güvenlik olayları bölümündedir."></canvas><div id="radar-blips-container"></div><span class="radar-label">DS IPS / EVENT RADAR</span><span class="radar-state" id="radar-state">Veri bekleniyor</span><div class="radar-axis">N<br><span>360°</span></div></div>
+      <div id="geo-view" class="geo-view" style="display:none"><div id="leaflet-map"></div></div>
+      <div class="panel-foot"><span><i class="legend-dot indigo"></i> Ağ aktivitesi</span><span><i class="legend-dot red"></i> Güvenlik olayı</span><span class="foot-note">Radar konumları temsilidir</span></div>
+    </article>
+    <article class="panel risk-panel" data-reveal>
+      <div class="panel-header">{{ panel_head('Olay yoğunluğu', 'Kayıtlı alarmların önem dağılımı') }}<span class="icon-muted">{{ icon('chart') }}</span></div>
+      <div class="risk-visual"><div class="chart-ring"><canvas id="alertChart" role="img" aria-label="Alarmların önem seviyesine göre dağılımı"></canvas><div class="risk-center"><span class="eyebrow">OLAY SKORU</span><strong id="main-risk-score">0</strong><span id="risk-trend">Veri bekleniyor</span></div></div></div>
+      <div class="risk-legend"><span><i class="legend-dot red"></i>Kritik</span><span><i class="legend-dot amber"></i>Yüksek</span><span><i class="legend-dot indigo"></i>Orta</span><span><i class="legend-dot gray"></i>Düşük</span></div>
+      <p class="risk-caption">Önem ağırlıklı toplam · en fazla 999</p>
+      <div class="resource-grid"><div><span>İşlemci <b id="cpu-gauge">0%</b></span><div class="meter"><i id="cpu-bar"></i></div><small id="cpu-usage">0%</small></div><div><span>Bellek <b id="ram-gauge">0%</b></span><div class="meter"><i id="ram-bar"></i></div><small id="ram-usage">0%</small></div></div>
+    </article>
+  </div>
+</section>
+<section id="alerts" class="page-section" data-reveal>
+  <div class="section-heading"><div><span class="section-index">01</span><h2>Güvenlik olayları</h2></div><span class="subtle">Anlık alarm akışı</span></div>
+  <div class="panel alerts-panel"><div class="panel-header"><div class="alert-filters segmented" role="group" aria-label="Alarm filtresi"><button class="filter-btn active" onclick="filterAlerts('all')" aria-pressed="true">Tüm olaylar</button><button class="filter-btn" onclick="filterAlerts('critical')" aria-pressed="false">Kritik</button><button class="filter-btn" onclick="filterAlerts('warning')" aria-pressed="false">Uyarı</button></div><div class="alert-tools"><div class="sound-control"><button id="sound-toggle-btn" class="btn btn-sm muted" onclick="toggleSound()" aria-pressed="false">Ses kapalı</button><label class="sr-only" for="volume-slider">Bildirim ses düzeyi</label><input type="range" id="volume-slider" min="0" max="1" step="0.1" value="0.5"></div><button class="btn btn-sm btn-quiet" id="clear-alerts-btn" onclick="clearAlertFeed()">Akışı temizle</button></div></div><div class="alerts-list" id="alerts-list" data-lenis-prevent><div class="alert-empty">{{ icon('shield') }}<strong>Henüz bir güvenlik olayı yok</strong><span>Yakalama başladığında tespit edilen olaylar burada listelenir.</span></div></div></div>
+</section>
+<section id="network" class="page-section">
+  <div class="section-heading"><div><span class="section-index">02</span><h2>Ağ görünürlüğü</h2></div><span class="subtle">Bağlantılar ve cihazlar</span></div>
+  <div class="network-grid"><article class="panel map-panel" data-reveal><div class="panel-header">{{ panel_head('Ağ topolojisi', 'Cihaz ayrıntıları için bir düğüm seçin') }}{{ icon('network') }}</div><div id="network-map" data-lenis-prevent></div><div class="panel-foot"><span><i class="legend-dot indigo"></i>Ağ geçidi ve cihazlar</span><span class="foot-note">Keşfedilen bağlantılar</span></div></article><article class="panel traffic-panel" data-reveal><div class="panel-header">{{ panel_head('Aktif cihazlar', 'Son 10 dakikada görülen cihazlar') }}<button class="icon-button" onclick="fetchRecordsForTrafficList()" aria-label="Cihazları yenile">{{ icon('refresh') }}</button></div><div class="table-scroll device-table" data-lenis-prevent><table><thead><tr><th>Cihaz / adres</th><th class="align-right">İşlem</th></tr></thead><tbody id="general-traffic-body"><tr><td colspan="2" class="table-empty">Cihaz verisi bekleniyor.</td></tr></tbody></table></div></article></div>
+  <div id="map-context-menu" class="map-context-menu" style="display:none"><div id="context-header"></div><button id="btn-context-ban" class="btn btn-sm btn-danger">Cihazı engelle</button><button class="btn btn-sm" onclick="document.getElementById('map-context-menu').style.display='none'">Kapat</button></div>
+</section>
+<section id="modules" class="page-section">
+  <div class="section-heading"><div><span class="section-index">03</span><h2>Tespit modülleri</h2></div><span class="subtle">Protokol ve uygulama telemetrisi</span></div>
+  <div class="modules-row">
+  {% set modules = [
+    ('arp','ARP analizi','network',[('arp-requests','İstek'),('arp-replies','Yanıt'),('arp-gratuitous','Gratuitous')]),
+    ('scan','Port tarama tespiti','search',[('scan-syn','SYN'),('scan-fin','FIN'),('scan-xmas','XMAS'),('scan-null','NULL'),('scan-udp','UDP')]),
+    ('wifi','Kablosuz ağ','wifi',[('wifi-deauth','Deauth'),('wifi-beacon','Beacon'),('wifi-evil-twin','Evil Twin')]),
+    ('healing','Anti-MITM onarımı','shield',[('healing-count','Onarılan cihaz')]),
+    ('hids','HIDS / WAF','lock',[('hids-sqli','SQLi'),('hids-rce','RCE'),('hids-lfi','LFI'),('hids-ssh','SSH'),('hids-scanner','Tarama'),('hids-xss','XSS'),('hids-ddos','DDoS')]),
+    ('ipset','ipset güvenlik duvarı','shield',[('ipset-total','Toplam engel'),('ipset-active','Aktif')]),
+    ('telegram','Telegram bildirimleri','bell',[('tg-sent','Gönderilen'),('tg-commands','Komut')])
+  ] %}
+  {% for key, title, glyph, counters in modules %}<article class="module-card" id="{{ key }}-module" data-reveal><div class="module-header"><span class="module-icon">{{ icon(glyph) }}</span><h3>{{ title }}</h3></div><div class="module-stats">{% for id, label in counters %}<div class="module-stat"><span class="module-stat-value" id="{{ id }}">0</span><span class="module-stat-label">{{ label }}</span></div>{% endfor %}</div><div class="module-footer">{% if key == 'wifi' %}<span class="module-status" id="wifi-status">Durum bekleniyor</span>{% elif key == 'telegram' %}<span class="module-status" id="tg-status">Durum bekleniyor</span>{% elif key == 'healing' %}<span id="healing-indicator">{{ icon('activity') }}</span><span class="module-status">Onarım sayacı</span>{% else %}<span class="module-status">{{ 'Alarm sayacı' if key == 'hids' else 'Kayıtlı telemetri' }}</span>{% endif %}</div></article>{% endfor %}
+    <a class="module-card analysis-card" href="/soc_premium" data-reveal><span class="module-icon">{{ icon('chart') }}</span><h3>Daha derin bir bakış.</h3><p>Davranış profilleri ve zafiyet raporlarını inceleyin.</p><span class="text-link">SOC analizine git {{ icon('arrow') }}</span></a>
+  </div>
+</section>
+<section id="defense" class="page-section">
+  <div class="section-heading"><div><span class="section-index">04</span><h2>Savunma yönetimi</h2></div><span class="subtle">Yakalama ve müdahale araçları</span></div>
+  <div class="defense-grid">
+    <article class="panel control-panel" data-reveal><div class="panel-header">{{ panel_head('Yakalama kontrolü', 'İzlenecek ağ arayüzünü seçin') }}{{ icon('settings') }}</div><div class="panel-body"><label for="interface-input">Ağ arayüzü</label><input id="interface-input" value="{{ current_interface|default('eth0') }}" class="input-field" placeholder="eth0, wlan0…"><div class="control-buttons"><button class="btn btn-primary" id="start-btn" onclick="startSniffer()">{{ icon('play') }} Başlat</button><button class="btn btn-danger" id="stop-btn" onclick="stopSniffer()" disabled>{{ icon('stop') }} Durdur</button></div><div class="capture-meta"><span>Çalışma süresi <b id="uptime" class="mono">00:00:00</b></span><span><i id="pcap-status-dot" class="pcap-dot ready"></i>PCAP</span></div><hr><label>Ağ geçidi</label><p class="field-help">Etkinleştirildiğinde cihazların ağ geçidi adresini IPS sunucusuna yönlendirin.</p><button class="btn btn-full" id="gateway-mode-btn" onclick="toggleGatewayMode()">Ağ geçidi modunu değiştir</button><button class="btn btn-danger btn-full" id="dhcp-mode-btn" onclick="toggleDHCP()">DHCP Kill Switch</button><p id="dhcp-status-text" class="field-help" style="display:none"></p></div></article>
+    <article class="panel ban-panel" data-reveal><div class="panel-header">{{ panel_head('Erişim kısıtlamaları', 'IP ve MAC adresi engellemeleri') }}{{ icon('lock') }}</div><div class="ban-list" id="ban-list" data-lenis-prevent><div class="ban-empty">Aktif engelleme bulunmuyor.</div></div><details class="manual-ban"><summary>Manuel engelleme ekle</summary><div class="ban-form"><label for="ban-ip">IP adresi</label><input id="ban-ip" class="input-field" placeholder="192.168.1.10"><label for="ban-mac">MAC adresi (isteğe bağlı)</label><input id="ban-mac" class="input-field" placeholder="AA:BB:CC:DD:EE:FF"><label for="ban-reason">Neden</label><input id="ban-reason" class="input-field" placeholder="Engelleme nedeni"><button class="btn btn-danger btn-full" onclick="addBan()">Engelleme uygula</button></div></details></article>
+    <article class="panel active-defense-panel" data-reveal><div class="panel-header">{{ panel_head('Aktif savunma', 'Uygulanan müdahale kuralları') }}{{ icon('shield') }}</div><div class="defense-list" id="active-defense-list" data-lenis-prevent><div class="ban-empty">Aktif savunma kuralı yok.</div></div><div class="panel-foot"><button class="btn btn-sm" onclick="openDNSBlocklist()">DNS engel listesi</button><button class="btn btn-sm btn-danger" onclick="cleanupActiveDefense()">Kuralları temizle</button></div></article>
+  </div>
+  <article class="panel scanner-panel" data-reveal><div class="panel-header">{{ panel_head('Cihaz keşfi', 'Yerel ağdaki cihazları tarayın ve inceleyin') }}<button class="btn btn-sm" id="scan-btn" onclick="runNetworkScan()">{{ icon('search') }} Taramayı başlat</button></div><div class="scanner-list" id="scanner-list" data-lenis-prevent><div class="ban-empty">Keşfedilen cihazları görmek için taramayı başlatın.</div></div></article>
+</section>
+{% endblock %}
+{% block modals %}
+<div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" style="display:none" data-lenis-prevent><div class="modal-content"><div class="modal-header"><div><span class="eyebrow">ENTEGRASYONLAR</span><h2 id="settings-title">Bildirim ayarları</h2></div><button class="icon-button" onclick="closeSettings()" aria-label="Ayarları kapat">{{ icon('close') }}</button></div><p class="field-help">Güvenlik olaylarının iletileceği kanalları yapılandırın.</p><div class="control-group"><label for="setting-discord">Discord webhook adresi</label><input type="url" id="setting-discord" class="input-field" placeholder="https://discord.com/api/webhooks/…"></div><div class="control-group"><label for="setting-telegram-token">Telegram bot anahtarı</label><input type="password" id="setting-telegram-token" class="input-field" autocomplete="off" placeholder="Bot token"></div><div class="control-group"><label for="setting-telegram-chat">Telegram sohbet kimliği</label><input id="setting-telegram-chat" class="input-field" placeholder="-100123456789"></div><div class="modal-actions"><button class="btn" onclick="closeSettings()">Vazgeç</button><button class="btn btn-primary" onclick="saveSettings()">Değişiklikleri kaydet</button></div></div></div>
+<div id="dns-blocklist-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="dns-title" style="display:none" data-lenis-prevent><div class="modal-content"><div class="modal-header"><h2 id="dns-title">DNS engel listesi</h2><button class="icon-button" data-close-modal aria-label="DNS listesini kapat">{{ icon('close') }}</button></div><p class="field-help">Her satıra bir alan adı yazın. Bu alan adlarına giden istekler karantina sayfasına yönlendirilir.</p><label for="dns-blocklist-textarea">Engellenecek alan adları</label><textarea id="dns-blocklist-textarea" class="input-field mono" rows="10" placeholder="example.com"></textarea><div class="modal-actions"><button class="btn" data-close-modal>Vazgeç</button><button class="btn btn-primary" onclick="saveDNSBlocklist()">Listeyi kaydet</button></div></div></div>
+<div id="traffic-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="traffic-title" style="display:none" data-lenis-prevent><div class="modal-content modal-wide"><div class="modal-header"><div><span class="eyebrow">CİHAZ TRAFİĞİ</span><h2 id="traffic-title">Ağ gözetleme <span id="traffic-ip" class="mono"></span></h2></div><button class="icon-button" onclick="closeTrafficModal()" aria-label="Trafik penceresini kapat">{{ icon('close') }}</button></div><p class="field-help">Cihazın DNS ve SNI üzerinden gözlemlenen alan adı bağlantıları.</p><div class="table-scroll"><table><thead><tr><th>Zaman</th><th>Alan adı / hedef</th><th>Tür</th></tr></thead><tbody id="traffic-table-body"></tbody></table></div></div></div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/leaflet.js') }}"></script><script src="{{ url_for('static', filename='js/chart.min.js') }}"></script><script src="{{ url_for('static', filename='vis-network.min.js') }}"></script><script src="{{ url_for('static', filename='socket.io.min.js') }}"></script><script src="{{ url_for('static', filename='app.js') }}"></script>
+<script>document.addEventListener('DOMContentLoaded', () => fetchActiveDefenseRules());</script>
+{% endblock %}

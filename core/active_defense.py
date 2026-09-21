@@ -1,7 +1,6 @@
 import sqlite3
 import threading
 import json
-from datetime import datetime
 
 class ActiveDefenseManager:
     """
@@ -50,9 +49,12 @@ class ActiveDefenseManager:
             self.cursor.execute('DELETE FROM active_defense_rules WHERE id = ?', (rule_id,))
             self.conn.commit()
             
-    def remove_rule_by_target(self, module, target_ip):
+    def remove_rule_by_target(self, module, target_ip=None, target_mac=None):
         with self.lock:
-            self.cursor.execute('DELETE FROM active_defense_rules WHERE module = ? AND target_ip = ?', (module, target_ip))
+            if target_mac is not None:
+                self.cursor.execute('DELETE FROM active_defense_rules WHERE module = ? AND target_mac = ?', (module, target_mac))
+            else:
+                self.cursor.execute('DELETE FROM active_defense_rules WHERE module = ? AND target_ip = ?', (module, target_ip))
             self.conn.commit()
 
     def get_all_rules(self):
@@ -74,3 +76,7 @@ class ActiveDefenseManager:
         with self.lock:
             self.cursor.execute('DELETE FROM active_defense_rules')
             self.conn.commit()
+
+    def close(self):
+        with self.lock:
+            self.conn.close()
