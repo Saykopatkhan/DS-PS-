@@ -80,7 +80,7 @@ def test_protected_mac_resolution_cannot_bypass_whitelist(monkeypatch, offline_b
             offline_blocker.block_ip(value)
 
 
-def test_rate_limit_inserts_allow_before_drop(monkeypatch, offline_blocker):
+def test_rate_limit_never_bypasses_existing_firewall_policy(monkeypatch, offline_blocker):
     calls = []
     def command(args, **kwargs):
         calls.append(args)
@@ -88,8 +88,10 @@ def test_rate_limit_inserts_allow_before_drop(monkeypatch, offline_blocker):
     monkeypatch.setattr('responder.blocker.subprocess.run', command)
     assert offline_blocker.rate_limit_ip('192.0.2.1')
     input_inserts = [cmd for cmd in calls if cmd[:3] == ['iptables', '-I', 'INPUT']]
+    assert len(input_inserts) == 1
     assert input_inserts[0][-1] == 'DROP'
-    assert input_inserts[1][-1] == 'ACCEPT'
+    assert '--hashlimit-above' in input_inserts[0]
+    assert not any('ACCEPT' in cmd for cmd in calls)
 
 
 def test_gateway_only_removes_owned_rules_restores_original_forwarding(monkeypatch):

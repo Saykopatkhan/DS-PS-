@@ -7,6 +7,9 @@
 
 import threading
 import logging
+import os
+import tempfile
+import time
 from collections import deque
 from scapy.all import sniff, wrpcap
 
@@ -27,6 +30,9 @@ class PacketSniffer:
         self.filter_str = filter_str
         self.callbacks = []
         self.running = False
+        self.packet_count = 0
+        self.last_packet_at = None
+        self.last_error = None
         self.sniff_thread = None
         self.pcap_buffer = deque(maxlen=1000)
         self._buffer_lock = threading.Lock()
@@ -49,6 +55,8 @@ class PacketSniffer:
         """
         with self._buffer_lock:
             self.pcap_buffer.append(packet)
+            self.packet_count += 1
+            self.last_packet_at = time.time()
         
         for callback in self.callbacks:
             try:
@@ -63,6 +71,7 @@ class PacketSniffer:
         if self.running or (self.sniff_thread and self.sniff_thread.is_alive()):
             return
         self.running = True
+        self.last_error = None
         self.sniff_thread = threading.Thread(target=self._sniff_loop, daemon=True)
         self.sniff_thread.start()
 
@@ -79,6 +88,7 @@ class PacketSniffer:
         except KeyboardInterrupt:
             self.stop()
         except Exception as e:
+            self.last_error = str(e)[:200]
             logging.error(f"Sniffer hatası: {e}")
             self.running = False
 
@@ -95,14 +105,21 @@ class PacketSniffer:
         Mevcut PCAP hafızasını (Ring Buffer) diske yazar.
         Ayrıca FIFO mekanizması ile dizindeki eski pcap dosyalarını silerek diskin dolmasını (DoS) engeller.
         """
+        temporary = None
         try:
             with self._buffer_lock:
                 packets = list(self.pcap_buffer)
-            wrpcap(filename, packets)
+            # Packet payloads are private evidence. Publish only complete files
+            # and use owner-only permissions regardless of the process umask.
+            fd, temporary = tempfile.mkstemp(prefix='.capture-', suffix='.tmp',
+                                             dir=os.path.dirname(os.path.abspath(filename)))
+            os.close(fd)
+            wrpcap(temporary, packets)
+            os.replace(temporary, filename)
+            temporary = None
             logging.info(f"PCAP başarıyla kaydedildi: {filename}")
             
             # Disk Exhaustion DoS Koruması (FIFO)
-            import os
             import glob
             pcap_dir = os.path.dirname(filename)
             if pcap_dir:
@@ -123,3 +140,9 @@ class PacketSniffer:
         except Exception as e:
             logging.error(f"PCAP kaydedilirken hata: {e}")
             return False
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass

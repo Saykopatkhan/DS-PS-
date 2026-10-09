@@ -30,8 +30,8 @@ class FakeSSHServer(paramiko.ServerInterface):
             alert_type='Deep Honeypot Sızma (SSH)',
             src_ip=self.client_ip, src_mac='N/A',
             dst_ip='N/A', dst_mac='N/A',
-            description=f'Kaynak {self.client_ip} SSH paneline sızdı! Denediği kullanıcı: {username} - Şifre: [REDACTED]',
-            severity='critical'
+            description=f'Kaynak {self.client_ip} SSH tuzağında kimlik doğrulamayı denedi. Kullanıcı: {username} - Şifre: [REDACTED]',
+            severity='high', source_verified=True,
         )
         SoundAlert.alert_attack("Kritik SSH Sızması")
         # Otomatik Ban plan gereği kapatıldı
@@ -149,7 +149,7 @@ class SSHHoneypot:
                 if text:
                     self.db.add_alert(alert_type='SSH Komut Ihlali (Honeypot)',
                                       src_ip=addr[0], src_mac='N/A', dst_ip='N/A', dst_mac='N/A',
-                                      description=f'Honeypot terminal komutu: {text}', severity='critical')
+                                      description=f'Honeypot terminal komutu: {text}', severity='high', source_verified=True)
                     if text in ('exit', 'quit'):
                         channel.sendall(b'logout\r\n')
                         return

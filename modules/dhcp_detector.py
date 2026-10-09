@@ -10,7 +10,7 @@ Sahte DHCP Sunucusu (Rogue DHCP) ve DHCP Starvation tespit modülü.
 """
 import time
 from collections import defaultdict
-from scapy.all import DHCP, IP, Ether, conf
+from scapy.all import BOOTP, DHCP, IP, Ether, conf
 from core.database import Database
 from utils.sound import SoundAlert
 
@@ -25,6 +25,8 @@ class DHCPDetector:
         self.starvation_threshold = 20 # Saniyede 20 DISCOVER
         self.detection_window = 5.0
         self.last_reset = time.time()
+        self._discover_transactions = set()
+        self._rogue_alerts = set()
         
         # Gerçek gateway IP'sini öğren
         # A DHCP server need not be the router. Configure an approved server
@@ -50,9 +52,15 @@ class DHCPDetector:
                     src_mac = packet[Ether].src
                     
                     if msg_type == 1:
-                        self.discover_count[src_mac] += 1
-                        self.total_discovers += 1
-                        self._check_starvation(src_mac)
+                        transaction = (src_mac, packet[BOOTP].xid) if packet.haslayer(BOOTP) else None
+                        if transaction is None or transaction not in self._discover_transactions:
+                            if transaction is not None:
+                                if len(self._discover_transactions) >= 10000:
+                                    self._discover_transactions.pop()
+                                self._discover_transactions.add(transaction)
+                            self.discover_count[src_mac] += 1
+                            self.total_discovers += 1
+                            self._check_starvation(src_mac)
                         
                     # Option 55 (Parameter Request List) yakalama
                     param_req_list = self._get_dhcp_option(dhcp_options, 'param_req_list')
@@ -77,10 +85,8 @@ class DHCPDetector:
                                 src_ip = packet[IP].src if packet.haslayer(IP) else '0.0.0.0'
                                 if src_ip != '0.0.0.0':
                                     self.db.update_ip_mac(src_ip, src_mac, os_type=os_type)
-                                else:
-                                    # IP bilinmiyorsa bile ileride bir paket geldiğinde bu MAC'in OS'unu tutmak için
-                                    # bir veritabanı update'i yapılabilir ama şimdilik IP alanına 'N/A' diyebiliriz
-                                    self.db.update_ip_mac('N/A', src_mac, os_type=os_type)
+                                # An unassigned address is not a device identity;
+                                # do not merge every new client into an 'N/A' row.
                         except Exception:
                             pass
             
@@ -88,8 +94,13 @@ class DHCPDetector:
             elif msg_type in [2, 5]:
                 if packet.haslayer(IP):
                     src_ip = packet[IP].src
-                    if self.legit_dhcp and src_ip != self.legit_dhcp:
-                        self._detect_rogue_dhcp(src_ip, packet[Ether].src if packet.haslayer(Ether) else 'N/A')
+                    # Replies may arrive through a relay whose IP is not the server.
+                    server_ip = self._get_dhcp_option(dhcp_options, 'server_id') or src_ip
+                    if self.legit_dhcp and server_ip != self.legit_dhcp and server_ip not in self._rogue_alerts:
+                        if len(self._rogue_alerts) >= 10000:
+                            self._rogue_alerts.pop()
+                        self._rogue_alerts.add(server_ip)
+                        self._detect_rogue_dhcp(server_ip, packet[Ether].src if packet.haslayer(Ether) else 'N/A')
                         
         self._reset_window()
 
@@ -109,13 +120,14 @@ class DHCPDetector:
         return None
 
     def _check_starvation(self, src_mac):
-        if self.total_discovers > self.starvation_threshold:
+        # The configured threshold is a rate per second, not a five-second total.
+        if self.total_discovers > self.starvation_threshold * self.detection_window:
             self.db.add_alert(
                 alert_type='DHCP Starvation',
                 src_ip='N/A', src_mac=src_mac,
                 dst_ip='255.255.255.255', dst_mac='ff:ff:ff:ff:ff:ff',
-                description=f'Ağda aşırı sahte DHCP Discover paketi. (Kaynak: {src_mac})',
-                severity='high'
+                description=f'{self.detection_window:g}s içinde {self.total_discovers} farklı DHCP Discover işlemi gözlendi. Yoğun istemci açılışı veya havuz tüketme girişimi olabilir.',
+                severity='warning'
             )
             SoundAlert.alert_attack("DHCP IP Havuzu Tüketme")
             self.discover_count.clear()
@@ -130,11 +142,12 @@ class DHCPDetector:
             severity='critical'
         )
         SoundAlert.alert_attack("Sahte DHCP Sunucusu")
-        if self.blocker and self.auto_ban:
-            self.blocker.block_mac(rogue_mac, reason="Rogue DHCP")
+        # The L2 sender can be a legitimate relay, not the advertised server.
 
     def _reset_window(self):
         if time.time() - self.last_reset > self.detection_window:
             self.discover_count.clear()
             self.total_discovers = 0
+            self._discover_transactions.clear()
+            self._rogue_alerts.clear()
             self.last_reset = time.time()

@@ -9,7 +9,8 @@
 DNS Tunneling ve Veri Sızdırma (Exfiltration) tespit modülü.
 """
 import time
-from collections import defaultdict
+import math
+from collections import Counter, defaultdict
 from scapy.all import DNS, DNSQR, DNSRR, IP, Ether, TCP, UDP, Raw, sendp
 from core.database import Database
 from utils.sound import SoundAlert
@@ -26,6 +27,9 @@ class DNSDetector:
         self.max_subdomain_len = 50
         self.last_reset = time.time()
         self.dns_sinkhole = None
+        self.tunnel_candidates = {}
+        self.tunnel_min_queries = 10
+        self._tunnel_alerts = set()
 
     def analyze(self, packet):
         self._reset_window()
@@ -45,8 +49,7 @@ class DNSDetector:
                 blocked = self.dns_sinkhole.is_blocked(domain) if self.dns_sinkhole else False
                 if blocked:
                     self._trigger_sinkhole(src_ip, domain, packet)
-                if len(domain.split('.')) > 2 and len(domain.split('.')[0]) > self.max_subdomain_len:
-                    self._detect_tunneling(src_ip, domain)
+                self._observe_tunneling(src_ip, domain)
             self._check_flood(src_ip)
         if packet.haslayer(TCP) and packet.haslayer(Raw):
             port = packet[TCP].dport
@@ -150,11 +153,33 @@ class DNSDetector:
             severity='high')
         SoundAlert.alert_attack('DNS Sinkhole')
 
+    def _observe_tunneling(self, src_ip, domain):
+        labels = domain.split('.')
+        if len(labels) < 3 or not self.max_subdomain_len < len(labels[0]) <= 63:
+            return
+        label = labels[0]
+        entropy = -sum((count / len(label)) * math.log2(count / len(label))
+                       for count in Counter(label).values())
+        if entropy < 3.5:
+            return
+        key = (src_ip, '.'.join(labels[1:]))
+        if key not in self.tunnel_candidates and len(self.tunnel_candidates) >= 10000:
+            oldest = next(iter(self.tunnel_candidates))
+            self.tunnel_candidates.pop(oldest)
+            self._tunnel_alerts.discard(oldest)
+        candidates = self.tunnel_candidates.setdefault(key, set())
+        # Repeated lookups/retransmissions of a long CDN name are not diversity.
+        if len(candidates) < self.tunnel_min_queries:
+            candidates.add(label)
+        if len(candidates) >= self.tunnel_min_queries and key not in self._tunnel_alerts:
+            self._tunnel_alerts.add(key)
+            self._detect_tunneling(src_ip, domain)
+
     def _detect_tunneling(self, src_ip, domain):
         self.db.add_alert(
             alert_type='DNS Tunneling / Exfiltration', src_ip=src_ip, src_mac='N/A',
             dst_ip='N/A', dst_mac='N/A',
-            description=f'Kaynak {src_ip} anormal uzunlukta DNS sorgusu yaptı: {domain}', severity='critical')
+            description=f'Kaynak {src_ip}, {self.detection_window}s içinde aynı alan altında en az {self.tunnel_min_queries} farklı uzun ve yüksek çeşitlilikte DNS etiketi sorguladı. Olası tünelleme; örnek: {domain}', severity='warning')
         SoundAlert.alert_attack('DNS Tünelleme')
 
     def _check_flood(self, src_ip):
@@ -170,4 +195,6 @@ class DNSDetector:
         now = time.time()
         if now - self.last_reset > self.detection_window:
             self.query_count.clear()
+            self.tunnel_candidates.clear()
+            self._tunnel_alerts.clear()
             self.last_reset = now

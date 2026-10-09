@@ -3,6 +3,7 @@ import re
 import os
 import time
 import ipaddress
+from collections import OrderedDict, deque
 from urllib.parse import unquote
 
 class HIDSEngine:
@@ -16,6 +17,9 @@ class HIDSEngine:
         self.tasks = []
         self._loop = None
         self._last_cleanup = 0
+        self.MAX_SOURCES = 10000
+        self.ALERT_COOLDOWN = 60
+        self._last_alert = OrderedDict()
         
         # İzlenecek Log Dosyaları
         self.LOG_FILES = {
@@ -26,8 +30,8 @@ class HIDSEngine:
         
         # Regex İmza Kütüphanesi
         self.SIGNATURES = {
-            'SQL_INJECTION': re.compile(r'(?i)(union.*select|select.*from|insert.*into|drop.*table|waitfor.*delay|1=1|--$)'),
-            'RCE_COMMAND_INJ': re.compile(r'(?i)([;|&]\s*(?:wget|curl|nc|bash|sh|perl|python|ruby)\b|`|\$\(|\b(?:wget|curl|nc|bash|sh|perl|python|ruby)\s+)'),
+            'SQL_INJECTION': re.compile(r'(?i)(\bunion\s+(?:all\s+)?select\b|\bselect\b.+\bfrom\b|\binsert\s+into\b|\bdrop\s+table\b|\bwaitfor\s+delay\b|[\'\"]\s*(?:or|and)\s+1\s*=\s*1)'),
+            'RCE_COMMAND_INJ': re.compile(r'(?i)([;|&]\s*(?:wget|curl|nc|bash|sh|perl|python|ruby)\b|`|\$\()'),
             'LFI_DIR_TRAVERSAL': re.compile(r'(?i)(\.\./\.\./|/etc/passwd|/windows/win\.ini|php://filter|php://input)'),
             'XSS_REFLECTED': re.compile(r'(?i)(<script|javascript:|onerror\s*=|onload\s*=|onclick\s*=|<img[^>]+on\w+\s*=|alert\s*\(|document\.cookie|<svg[^>]+on\w+)'),
             'SCANNER_USER_AGENT': re.compile(r'(?i)(sqlmap|nikto|gobuster|nmap|dirb|w3af|zmap|masscan)'),
@@ -35,22 +39,22 @@ class HIDSEngine:
         
         # Seviye Bazlı Haritalama
         self.SEVERITY_MAP = {
-            'SQL_INJECTION': 'critical',
-            'RCE_COMMAND_INJ': 'critical',
+            'SQL_INJECTION': 'high',
+            'RCE_COMMAND_INJ': 'high',
             'LFI_DIR_TRAVERSAL': 'high',
             'XSS_REFLECTED': 'high',
             'SCANNER_USER_AGENT': 'medium',
             'SSH_BRUTE_FORCE': 'high',
-            'HTTP_DDOS': 'high',
+            'HTTP_DDOS': 'medium',
         }
         
         # SSH Brute Force takibi (IP -> list of timestamps)
-        self.ssh_failures = {}
+        self.ssh_failures = OrderedDict()
         self.SSH_BRUTE_LIMIT = 5
         self.SSH_BRUTE_WINDOW = 60 # Saniye
         
         # HTTP DDoS takibi (IP -> deque of timestamps)
-        self.http_requests = {}
+        self.http_requests = OrderedDict()
         self.DDOS_THRESHOLD = 100  # istek
         self.DDOS_WINDOW = 10     # saniye
 
@@ -58,6 +62,14 @@ class HIDSEngine:
         self.callbacks.append(callback)
         
     def _trigger_alert(self, alert_type, source_ip, details):
+        now = time.monotonic()
+        key = (alert_type, source_ip)
+        if now - self._last_alert.get(key, float('-inf')) < self.ALERT_COOLDOWN:
+            return
+        self._last_alert[key] = now
+        self._last_alert.move_to_end(key)
+        while len(self._last_alert) > self.MAX_SOURCES:
+            self._last_alert.popitem(last=False)
         severity = self.SEVERITY_MAP.get(alert_type, 'medium')
         event = {
             'type': alert_type,
@@ -66,6 +78,8 @@ class HIDSEngine:
             'severity': severity,
             'timestamp': time.time()
         }
+        if alert_type == 'SSH_BRUTE_FORCE':
+            event['source_verified'] = True
         for cb in self.callbacks:
             try:
                 cb(event)
@@ -75,26 +89,30 @@ class HIDSEngine:
     async def tail_file(self, file_path, log_type):
         """Follow rotation while always reaping the child on stop/cancellation."""
         if not os.path.exists(file_path):
-            return
+            return 'unavailable'
         process = None
         try:
             process = await asyncio.create_subprocess_exec(
                 'tail', '-F', '-n', '0', file_path,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            if hasattr(self, 'reader_health'):
+                self.reader_health[log_type] = {'state': 'running'}
+                if all(value['state'] != 'starting' for value in self.reader_health.values()):
+                    self.ready.set()
             while self.running:
                 try:
                     line = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
                 except asyncio.TimeoutError:
                     continue
                 if not line:
-                    break
+                    raise RuntimeError('HIDS log reader exited unexpectedly')
                 decoded = line.decode('utf-8', errors='replace').strip()
                 if log_type == 'auth_log':
                     self._analyze_auth_log(decoded)
                 else:
                     self._analyze_web_log(decoded)
         except (OSError, ValueError) as exc:
-            print(f'HIDS Tail Hatası ({file_path}): {exc}')
+            raise RuntimeError(f'HIDS log reader failed: {log_type}') from exc
         finally:
             if process and process.returncode is None:
                 try:
@@ -116,6 +134,18 @@ class HIDSEngine:
                     del table[ip]
         self._last_cleanup = now
 
+    def _record(self, table, source, now, window, maximum):
+        if source not in table:
+            if len(table) >= self.MAX_SOURCES:
+                table.popitem(last=False)
+            table[source] = deque(maxlen=maximum)
+        table.move_to_end(source)
+        samples = table[source]
+        while samples and samples[0] < now - window:
+            samples.popleft()
+        samples.append(now)
+        return samples
+
     def _analyze_web_log(self, line):
         """Apache/Nginx access log analizi (Basit Kombine Format Analizi)."""
         # IP'yi çıkartmak için basit regex (Genelde ilk sütundur)
@@ -129,66 +159,79 @@ class HIDSEngine:
             return
         
         # HTTP DDoS Tespiti (IP başına istek hızı)
-        now = time.time()
+        now = time.monotonic()
         self._cleanup(now)
-        from collections import deque
-        if src_ip not in self.http_requests:
-            self.http_requests[src_ip] = deque()
-        self.http_requests[src_ip].append(now)
-        while self.http_requests[src_ip] and self.http_requests[src_ip][0] < now - self.DDOS_WINDOW:
-            self.http_requests[src_ip].popleft()
-        if len(self.http_requests[src_ip]) >= self.DDOS_THRESHOLD:
+        samples = self._record(self.http_requests, src_ip, now, self.DDOS_WINDOW, self.DDOS_THRESHOLD)
+        if len(samples) >= self.DDOS_THRESHOLD:
             self._trigger_alert('HTTP_DDOS', src_ip, f"{self.DDOS_WINDOW}s içinde {len(self.http_requests[src_ip])} HTTP isteği")
             self.http_requests[src_ip].clear()  # Alarm sonrası sıfırla
-            return
         
         # Attack syntax belongs in the HTTP request, not normal UA punctuation.
         request_match = re.search(r'"([A-Z]+\s+\S+\s+HTTP/[\d.]+)"', line)
         request_text = unquote(unquote(request_match.group(1))) if request_match else ''
         for sig_name, sig_regex in self.SIGNATURES.items():
-            candidate = line if sig_name == 'SCANNER_USER_AGENT' else request_text
+            # In combined format the last quoted field is the User-Agent.
+            # A scanner name in a URL or referrer is not a scanner identity.
+            quoted = re.findall(r'"([^"\r\n]*)"', line) if sig_name == 'SCANNER_USER_AGENT' else []
+            candidate = (quoted[-1] if len(quoted) >= 3 else '') if sig_name == 'SCANNER_USER_AGENT' else request_text
             if sig_regex.search(candidate):
-                self._trigger_alert(sig_name, src_ip, f"WAF İhlali: {sig_name}")
+                self._trigger_alert(sig_name, src_ip, f"HTTP isteğinde şüpheli imza: {sig_name}; başarılı istismar doğrulanmadı.")
                 break # Aynı satırdan 1 alarm yeterli
 
     def _analyze_auth_log(self, line):
-        """SSH auth.log analizi."""
-        # Başarısız SSH girişini yakala
-        if "Failed password" in line or "Connection closed by authenticating user" in line:
-            # IP adresini bul
-            ip_match = re.search(r'from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
-            if not ip_match:
-                # Farklı formattaki IP'ler için alternatif arama
-                ip_match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
-                
-            if ip_match:
-                try:
-                    src_ip = str(ipaddress.ip_address(ip_match.group(1)))
-                except ValueError:
-                    return
-                now = time.time()
-                self._cleanup(now)
-                
-                if src_ip not in self.ssh_failures:
-                    self.ssh_failures[src_ip] = []
-                    
-                self.ssh_failures[src_ip].append(now)
-                
-                # Temizlik
-                self.ssh_failures[src_ip] = [t for t in self.ssh_failures[src_ip] if now - t <= self.SSH_BRUTE_WINDOW]
-                
-                if len(self.ssh_failures[src_ip]) >= self.SSH_BRUTE_LIMIT:
-                    self._trigger_alert('SSH_BRUTE_FORCE', src_ip, f"{self.SSH_BRUTE_WINDOW} saniyede {len(self.ssh_failures[src_ip])} başarısız SSH denemesi")
-                    self.ssh_failures[src_ip] = [] # Alarm sonrası sıfırla
+        """Count actual sshd failures; disconnects and usernames are not peers."""
+        match = re.search(
+            r'\bsshd(?:-session)?\[\d+\]: Failed password for (?:invalid user )?\S+ '
+            r'from (\S+) port \d+ ssh2(?:\s|$)', line,
+        )
+        if not match:
+            return
+        try:
+            src_ip = str(ipaddress.ip_address(match.group(1)))
+        except ValueError:
+            return
+        now = time.monotonic()
+        self._cleanup(now)
+        samples = self._record(self.ssh_failures, src_ip, now, self.SSH_BRUTE_WINDOW, self.SSH_BRUTE_LIMIT)
+        if len(samples) >= self.SSH_BRUTE_LIMIT:
+            self._trigger_alert('SSH_BRUTE_FORCE', src_ip, f"{self.SSH_BRUTE_WINDOW} saniyede {len(samples)} başarısız SSH denemesi")
+            samples.clear()
 
     async def run(self):
         if self.running:
             return
         self.running = True
         self._loop = asyncio.get_running_loop()
-        self.tasks = [asyncio.create_task(self.tail_file(path, kind)) for kind, path in self.LOG_FILES.items()]
+        self.ready = asyncio.Event()
+        self.reader_health = {kind: {'state': 'starting'} for kind in self.LOG_FILES}
+
+        def reader_finished(kind, task):
+            import logging
+            if task.cancelled():
+                self.reader_health[kind] = {'state': 'stopped'}
+            else:
+                error = task.exception()
+                if error:
+                    self.reader_health[kind] = {'state': 'failed', 'error': type(error).__name__}
+                    logging.getLogger(__name__).error(
+                        'HIDS reader failed: %s', kind,
+                        exc_info=(type(error), error, error.__traceback__))
+                else:
+                    self.reader_health[kind] = {'state': task.result() or 'stopped'}
+            if all(value['state'] != 'starting' for value in self.reader_health.values()):
+                self.ready.set()
+
+        self.tasks = []
+        for kind, path in self.LOG_FILES.items():
+            task = asyncio.create_task(self.tail_file(path, kind))
+            task.add_done_callback(lambda done, name=kind: reader_finished(name, done))
+            self.tasks.append(task)
+        if not self.tasks:
+            self.ready.set()
         try:
-            await asyncio.gather(*self.tasks, return_exceptions=True)
+            results = await asyncio.gather(*self.tasks, return_exceptions=True)
+            if self.running and any(isinstance(result, Exception) for result in results):
+                raise RuntimeError('No healthy HIDS log reader remains')
         finally:
             self.running = False
             self.tasks.clear()

@@ -25,16 +25,9 @@ class DPIDetector:
         self.blocker = blocker
         self.auto_ban = auto_ban
         
-        # Sızma testlerinde ve Reverse Shell'lerde sık görülen komut satırı imzaları
-        self.signatures = [
-            "cmd.exe",
-            "powershell",
-            "/bin/bash",
-            "/bin/sh",
-            "NCat",
-            "uid=0(root)",
-            "whoami"
-        ]
+        # A program name in documentation or a download is not a shell session.
+        self.shell_prompt = re.compile(r'(?:^|\n)[^\r\n]{0,80}[$#>]\s*(?:id|whoami)\s*\r?\n')
+        self.shell_identity = re.compile(r'\buid=\d+\([^\r\n)]+\)\s+gid=\d+\([^\r\n)]+\)')
         
         # YARA Kuralları (Malware / Webshell Tespiti)
         yara_rules = """
@@ -67,10 +60,9 @@ class DPIDetector:
             src_ip=src_ip, src_mac=packet.src if hasattr(packet, 'src') else 'N/A',
             dst_ip=dst_ip, dst_mac=packet.dst if hasattr(packet, 'dst') else 'N/A',
             description=description,
-            severity='critical'
+            severity='warning'
         )
-        if self.blocker and self.auto_ban:
-            self.blocker.block_ip(src_ip)
+        # A content match cannot establish whether a transfer is authorized.
 
     def analyze(self, packet):
         """TCP paketlerinin payload (veri) kısımlarını derinlemesine inceler."""
@@ -87,38 +79,30 @@ class DPIDetector:
                         return
 
                 # Byte dizisini string'e dönüştür (hataları yoksay)
-                original_payload = packet[Raw].load.decode('utf-8', errors='ignore')
+                original_payload = bytes(packet[Raw].load)[:65536].decode('utf-8', errors='ignore')
                 payload = original_payload.lower()
                 
                 # De-Obfuscation Motoru
                 # 1. URL Decode (%20 -> boşluk, vb.)
-                payload = urllib.parse.unquote(payload)
+                payload = urllib.parse.unquote(original_payload).lower()
                 
                 # 2. Base64 Decode
                 # Payload içinde geçen Base64 benzeri metinleri çöz ve incelemeye dahil et
                 b64_matches = re.findall(r'(?:[A-Za-z0-9+/]{4}){2,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?', original_payload)
-                for b64 in b64_matches:
+                for b64 in b64_matches[:32]:
                     try:
-                        decoded = base64.b64decode(b64).decode('utf-8', errors='ignore').lower()
+                        decoded = base64.b64decode(b64, validate=True).decode('utf-8').lower()
                         payload += " " + decoded
                     except Exception:
                         pass
                 
-                for sig in self.signatures:
-                    if sig.lower() in payload:
-                        src_ip = packet[IP].src
-                        dst_ip = packet[IP].dst
-                        
-                        self.db.add_alert(
-                            alert_type='DPI: Reverse Shell / Malicious Payload',
-                            src_ip=src_ip, src_mac='N/A', dst_ip=dst_ip, dst_mac='N/A',
-                            description=f'Kaynak {src_ip} paketinde şüpheli metin (İmza: {sig}) tespit edildi!',
-                            severity='critical'
-                        )
-                        if self.blocker and self.auto_ban:
-                            self.blocker.block_ip(src_ip)
-                        # Aynı paket için birden fazla alarm vermemek için döngüden çık
-                        break
+                if self.shell_prompt.search(payload) and self.shell_identity.search(payload):
+                    self.db.add_alert(
+                        alert_type='DPI: Shell Session Indicators',
+                        src_ip=src_ip, src_mac='N/A', dst_ip=dst_ip, dst_mac='N/A',
+                        description='Şifresiz içerikte komut istemi ve kullanıcı kimliği çıktısı birlikte gözlendi. Yetkisiz oturum olduğuna dair ek doğrulama gerekli.',
+                        severity='warning'
+                    )
                         
             except Exception:
                 pass

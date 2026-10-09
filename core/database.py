@@ -361,6 +361,17 @@ class Database:
             self.cursor.execute('SELECT * FROM banned_hosts WHERE is_active = 1')
             return [dict(row) for row in self.cursor.fetchall()]
 
+    def remove_ban_by_id(self, ban_id):
+        """Retire one stale history row without touching a newer target ban."""
+        with self.lock:
+            self.cursor.execute('''
+                UPDATE banned_hosts SET is_active=0, unban_time=CURRENT_TIMESTAMP
+                WHERE id=? AND is_active=1
+            ''', (ban_id,))
+            changed = self.cursor.rowcount > 0
+            self.conn.commit()
+        return changed
+
     def get_active_ban_count(self):
         """Aktif yasak sayısını döner."""
         with self.lock:
@@ -391,37 +402,23 @@ class Database:
             return count > 0
 
     def get_ip_mac_records(self, limit=100):
-        """IP-MAC kayıtlarını getirir (MAC adresine göre gruplanmış ve N/A IP'ler elenmiş şekilde)."""
+        """Return the latest observed binding per IP, retaining shared-MAC peers."""
+        if limit <= 0:
+            return []
         with self.lock:
-            self.cursor.execute('SELECT * FROM ip_mac_records ORDER BY last_seen DESC')
+            self.cursor.execute('SELECT * FROM ip_mac_records ORDER BY last_seen DESC, id DESC')
             rows = [dict(row) for row in self.cursor.fetchall()]
-            
-            # Aynı MAC adresine sahip birden fazla kayıt (Örn: N/A ve gerçek IP) varsa birleştir
-            unique_macs = {}
-            for r in rows:
-                mac = r['mac_address']
-                ip = r['ip_address']
-                
-                if mac not in unique_macs:
-                    unique_macs[mac] = r
-                else:
-                    # Mevcut kayıt N/A ise ve yeni gelen geçerliyse ez
-                    if unique_macs[mac]['ip_address'] == 'N/A' and ip != 'N/A':
-                        unique_macs[mac]['ip_address'] = ip
-                        
-                    # Mevcut kaydın OS/Vendor/Hostname bilgisi "Bilinmiyor" ise ve yeni gelende varsa tamamla
-                    for field in ['vendor', 'hostname', 'os_type']:
-                        if unique_macs[mac].get(field, 'Bilinmiyor') == 'Bilinmiyor' and r.get(field, 'Bilinmiyor') != 'Bilinmiyor':
-                            unique_macs[mac][field] = r[field]
-                            
-                    # Tehdit skorunu en yüksek olana ayarla
-                    if r.get('threat_score', 0) > unique_macs[mac].get('threat_score', 0):
-                        unique_macs[mac]['threat_score'] = r['threat_score']
-                        
-            result = list(unique_macs.values())
-            # Yeniden sırala ve limite göre kes
-            result.sort(key=lambda x: x.get('last_seen', ''), reverse=True)
-            return result[:limit]
+        records = {}
+        for row in rows:
+            ip = row['ip_address']
+            if not ip or ip == 'N/A' or ip in records:
+                continue
+            # A router MAC or an unknown MAC can describe multiple observed
+            # peers. Grouping by MAC silently erased these IPs from the panel.
+            records[ip] = row
+            if len(records) >= limit:
+                break
+        return list(records.values())
 
     def get_setting(self, key, default=None):
         """Ayar değerini getirir."""

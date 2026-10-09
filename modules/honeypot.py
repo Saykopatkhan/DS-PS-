@@ -12,7 +12,6 @@ Saldırganlar bu açık portlara bağlandığı anda deşifre olup TUZAKLANDI ro
 
 import socket
 import threading
-import time
 import logging
 from core.database import Database
 from utils.sound import SoundAlert
@@ -142,24 +141,9 @@ class Honeypot:
             src_ip=ip, src_mac='N/A',
             dst_ip='N/A', dst_mac='N/A',
             description=desc,
-            severity='critical'
+            severity='high', source_verified=True,
         )
         
-        # SocketIO üzerinden CANLI TUZAKLANDI bildirimi yolla
-        if self.socketio:
-            try:
-                self.socketio.emit('new_alert', {
-                    'id': int(time.time()),
-                    'ip': ip,
-                    'type': f'🕸️ HONEYPOT TUZAĞI ({service})',
-                    'description': desc,
-                    'severity': 'critical',
-                    'tarpitted': bool(self.auto_ban and self.tarpit),
-                    'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
-                }, namespace='/')
-            except Exception:
-                pass
-
         SoundAlert.alert_attack(f"{service} Honeypot İhlali")
         
         # Otomatik Ban ve Tarpit

@@ -39,6 +39,14 @@ sudo .venv/bin/python web_main.py --interface eth0 --target 192.168.1.0/24
 
 Ana panel, giriş ekranı ve SOC analiz sayfası ortak bir tasarım sistemi kullanır. Mobil yan menü, klavye ile yönetilebilen pencereler, canlı alarm filtreleri ve yerel coğrafi harita dahildir. İşletim sisteminin hareketi azaltma tercihi desteklenir.
 
+Cihaz haritası sabit, çakışmayan konumlar kullanır; yenileme cihazları yeniden
+hareketlendirmez. Haritayı sığdır düğmesi görünümü sıfırlar. Çizgiler gözlenen
+cihazların mantıksal ilişkisini gösterir; fiziksel kablo bağlantısı veya tahmini
+gateway iddiası değildir. Aynı MAC üzerinden görülen farklı IP'ler korunur.
+Radar gerçek paket sayısı, son paket zamanı ve yakalama bileşenlerinin durumunu
+gösterir. Yakalama kapalıyken veya azaltılmış hareket tercihinde dönmez;
+sekmeye geri dönünce etkin yakalamada animasyon sürer.
+
 [Lenis 1.3.26](https://github.com/darkroomengineering/lenis) sayfa kaydırmasını, [Anime.js 4.5.0](https://animejs.com/documentation/) bölüm geçişlerini ve bildirim animasyonlarını yönetir. Sürümleri sabitlenmiş dosyalar ve lisansları `web/static/vendor/` içinde bulunur; paneli çalıştırmak için Node.js veya CDN bağlantısı gerekmez. IP konumu sorguları sunucu üzerinden harici GeoIP hizmetini kullanmaya devam eder.
 
 Frontend bağımlılıklarını yeniden hazırlamak veya geliştirme kontrollerini çalıştırmak için:
@@ -65,6 +73,30 @@ DS_IPS_SCREENSHOTS=/tmp/dsips-ui PYTHONPATH=. .venv/bin/python tests/browser_smo
 - **Dry-run:** aktif savunma ve aktif tarama kapalıdır; engelleme başarısı veya gerçek ban kaydı üretmez.
 
 DNS gözlemleri sorgu ve yanıt ayrımı yapar. SNI ayrıştırması tek paketteki tam TLS ClientHello üzerinde çalışır; parçalanmış TCP akışını birleştirmez ve ECH/şifreli DNS içeriğini çözmez. Açık port taraması bir servisin erişilebilir olduğunu gösterir; zafiyet bulunduğuna tek başına kanıt oluşturmaz.
+
+## Olay değerlendirmesi ve kontrollü müdahale
+
+**Savunma yönetimi → İlişkilendirilmiş olaylar**, aynı kaynak için beş dakikalık
+pencerede toplanan bulguları, puanı ve müdahale gerekçesini gösterir. Aynı bulgu
+ailesinin tekrarı puanı artırmaz. Paketlerdeki kaynak IP veya yüksek trafik hızı
+tek başına otomatik ban sebebi değildir. Kararlar ve uygulama sonuçları SQLite'ta
+saklanır; yarıda kalan işlem `pending`, başarısız işlem `failed` olarak görünür.
+
+Varsayılan `DS_IPS_AUTO_RESPONSE=false` yalnızca değerlendirme yapar. Otomatik
+geçici IP engellemesi için bu değişkeni `true` yapmak, IPS modunda izlemeyi
+başlatmak ve dry-run'ı kapatmak gerekir. Ayrıca en az iki bulgu ailesi, 80 puan
+ve yerel SSH hata kaydı ya da kurulmuş tuzak bağlantısından kaynak doğrulaması
+aranır. Bu eşikler saldırı olasılığı yüzdesi değildir. Yönetim adresleri ve
+altyapı ağları `/etc/dsips/config.json` içindeki `whitelisted_ips` listesinde
+tek IP veya CIDR olarak korunabilir. IP engellemesi MAC engellemesine genişlemez.
+
+Salt okunur ve oturum gerektiren API'ler: `/api/incidents`,
+`/api/response-policy`, `/api/service-health`. Sonuncusu HIDS log okuyucularının
+ve isteğe bağlı servislerin çalışır, eksik veya başarısız durumlarını gösterir.
+Algılayıcı alarmından kaynak adrese otomatik geri tarama başlatılmaz.
+
+Düzeltmeler, eşikler, kullanım ve sınırlar:
+[Güvenilir tespit ve müdahale denetimi](docs/GUVENILIR_TESPIT_VE_MUDAHALE.md).
 
 ## Üretim sunucusu
 

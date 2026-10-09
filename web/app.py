@@ -43,6 +43,7 @@ from modules.waf_detector import WAFDetector
 from modules.dpi_detector import DPIDetector
 from core.scanner import NetworkScanner
 from core.active_defense import ActiveDefenseManager
+from core.response_policy import ResponsePolicy
 import atexit
 
 
@@ -112,6 +113,8 @@ class IPSWebApp:
         self._session_lock = threading.RLock()
         self._active_sessions = {}
         self._socket_sessions = {}
+        self._canary_lock = threading.Lock()
+        self._canary_alert_times = {}
         self._stats_thread = None
         self.app = Flask(__name__, template_folder='templates', static_folder='static')
         self.app.config.update(
@@ -142,6 +145,10 @@ class IPSWebApp:
             from responder.blocker import Blocker
             self.blocker = Blocker(self.db, auto_unban_time=unban_time, interface=self.interface, dry_run=self.dry_run, active_defense_mgr=self.active_defense_mgr)
             self.dry_run = bool(self.blocker.dry_run)
+
+        self.response_policy = ResponsePolicy(
+            self.db, self.blocker, mode=self.mode, dry_run=self.dry_run,
+            enabled=env_bool('DS_IPS_AUTO_RESPONSE', False))
 
         # Notifier entegrasyonu (Ayarlardan çekecek)
         from responder.notifier import Notifier
@@ -175,7 +182,7 @@ class IPSWebApp:
         except ImportError:
             self.gateway_mode = None
 
-        self.honeypot = Honeypot(self.db, getattr(self, 'blocker', None), auto_ban=self.mode == 'ips' and not self.dry_run, socketio=self.socketio, tarpit=self.tarpit)
+        self.honeypot = Honeypot(self.db, getattr(self, 'blocker', None), auto_ban=False, socketio=self.socketio, tarpit=self.tarpit)
 
         from modules.decoy_traffic import DecoyTrafficGenerator as DecoyGenerator
         self.decoy_generator = DecoyGenerator(dry_run=self.dry_run or self.mode != 'ips')
@@ -194,10 +201,8 @@ class IPSWebApp:
         from modules.vuln_scanner import VulnScanner
         self.vuln_scanner = VulnScanner(self.db, dry_run=self.dry_run)
         
-        # Otonom Tarayıcıyı ScanDetector'a bağla
-        self.scan_detector.auto_vuln_scan_cb = (
-            lambda ip: self.vuln_scanner.scan_ip_async(ip, 'N/A')
-        ) if self.mode == 'ips' and not self.dry_run else None
+        # Unverified packet sources must not initiate an automatic scan-back.
+        self.scan_detector.auto_vuln_scan_cb = None
         
         self.wifi_detector = None
         if self.wifi_enabled:
@@ -257,18 +262,16 @@ class IPSWebApp:
             # anında UI'ı uyarabiliriz ama UI fetchRecords ile de güncellenir.
         else:
             # Tehdit durumu
-            severity = 'critical' if 'SPOOF' in event_type or 'HONEYPOT' in event_type else 'high'
+            severity = event.get('severity', 'critical' if 'SPOOF' in event_type or 'HONEYPOT' in event_type else 'high')
             self.db.add_alert(
                 alert_type=event_type,
                 src_ip=src_ip,
                 src_mac='N/A',
-                dst_ip='N/A',
+                dst_ip=event.get('destination_ip', 'N/A'),
                 dst_mac='N/A',
                 description=details,
                 severity=severity
             )
-            if self.mode == 'ips' and hasattr(self, 'blocker') and self.blocker:
-                self.blocker.block_ip(src_ip, reason=f"FastSniffer: {event_type}", severity='high')
 
 
     def _register_routes(self):
@@ -381,6 +384,19 @@ class IPSWebApp:
         def get_stats():
             return jsonify(self._get_stats())
 
+        @self.app.route('/api/incidents')
+        def get_incidents():
+            return jsonify(self.response_policy.get_incidents(limit=_limit(100)))
+
+        @self.app.route('/api/response-policy')
+        def get_response_policy():
+            return jsonify(self.response_policy.status())
+
+        @self.app.route('/api/service-health')
+        def get_service_health():
+            services = getattr(self, 'runtime_services', None)
+            return jsonify(services.status() if services else {'running': False, 'services': {}})
+
         @self.app.route('/api/bans')
         def get_bans():
             bans = self.db.get_active_bans()
@@ -390,20 +406,27 @@ class IPSWebApp:
         def honeytoken_trigger():
             client_ip = request.remote_addr
             filename = request.path.lstrip('/')
-            
-            # Kendi IP'sinden geliyorsa (veya localhost ise)
-            if client_ip == '127.0.0.1':
-                pass # Kendi testleri için alert üretmeyebiliriz veya üretiriz. Üretelim.
-                
-            self.db.add_alert(
-                alert_type='Canary Token İhlali (Bubi Tuzağı)',
-                src_ip=client_ip, src_mac='N/A',
-                dst_ip='N/A', dst_mac='N/A',
-                description=f"Hacker gizli sisteme sızıp şu sahte dosyayı indirmeye çalıştı: {filename}",
-                severity='critical'
-            )
-            from utils.sound import SoundAlert
-            SoundAlert.alert_attack("Bubi Tuzağı İhlali")
+            now = time.monotonic()
+            key = (client_ip, filename)
+            with self._canary_lock:
+                previous = self._canary_alert_times.get(key)
+                record_alert = previous is None or now - previous >= 300
+                if record_alert:
+                    # Public URLs can also be fetched by indexing/prefetch tools.
+                    # Bound both repeat notifications and the source cache.
+                    self._canary_alert_times.pop(key, None)
+                    if len(self._canary_alert_times) >= 2048:
+                        self._canary_alert_times.pop(next(iter(self._canary_alert_times)))
+                    self._canary_alert_times[key] = now
+            if record_alert:
+                self.db.add_alert(
+                    alert_type='Canary Token Erişimi',
+                    src_ip=client_ip, src_mac='N/A',
+                    dst_ip='N/A', dst_mac='N/A',
+                    description=f"Sahte hassas dosya adresine erişim gözlendi: {filename}. "
+                                "Bu istek tek başına sisteme sızıldığını doğrulamaz.",
+                    severity='medium'
+                )
             return "This file is corrupted or you do not have permission to read it.", 403
         @self.app.route('/api/ban', methods=['POST'])
         def add_ban():
@@ -419,33 +442,46 @@ class IPSWebApp:
 
             if not self.blocker or self.dry_run:
                 return jsonify(success=False, error='Engelleme için IPS modu gerekli; dry-run kapalı olmalı'), 409
+            targets = {key: value for key, value in (('ip', ip), ('mac', mac)) if value}
+            applied = {}
+
+            def failure(message, status):
+                if applied:
+                    message += ' Bazı engeller uygulandı; etkin engelleri kontrol edin.'
+                return jsonify(success=False, error=message, applied=applied,
+                               pending={key: value for key, value in targets.items() if key not in applied}), status
+
             try:
-                if self.blocker:
-                    if self.blocker.start() is False:
-                        return jsonify(success=False, error='Güvenlik duvarı başlatılamadı'), 503
-                    if ip and self.blocker.block_ip(ip, reason=reason) is False:
-                        return jsonify(success=False, error='IP engellenemedi'), 503
-                    if mac and self.blocker.block_mac(mac, reason=reason) is False:
-                        return jsonify(success=False, error='MAC engellenemedi'), 503
-                        
-                    # Radarda ve haritada göstermek için alert tetikle
-                    self.db.add_alert(
-                        alert_type='Manuel Karantina',
-                        src_ip=ip or 'N/A', src_mac=mac or 'N/A',
-                        dst_ip='N/A', dst_mac='N/A',
-                        description=f"Kullanıcı tarafından manuel olarak ağdan izole edildi. Sebep: {reason}",
-                        severity='critical'
-                    )
-                else:
-                    self.db.add_ban(ip=ip or None, mac=mac or None, reason=reason)
-                return jsonify({'success': True})
+                if self.blocker.start() is False:
+                    return failure('Güvenlik duvarı başlatılamadı', 503)
+                # start() discovers protected infrastructure. Validate every
+                # target before applying the first requested firewall change.
+                if ip:
+                    self.blocker._validate_ip(ip, protected=True)
+                if mac:
+                    self.blocker._validate_mac(mac, protected=True)
+                if ip:
+                    if self.blocker.block_ip(ip, reason=reason) is False:
+                        return failure('IP engellenemedi veya zaten engelli', 503)
+                    applied['ip'] = ip
+                if mac:
+                    if self.blocker.block_mac(mac, reason=reason) is False:
+                        return failure('MAC engellenemedi veya zaten engelli', 503)
+                    applied['mac'] = mac
+
+                self.db.add_alert(
+                    alert_type='Manuel Karantina',
+                    src_ip=ip or 'N/A', src_mac=mac or 'N/A',
+                    dst_ip='N/A', dst_mac='N/A',
+                    description=f"Kullanıcı tarafından manuel olarak ağdan izole edildi. Sebep: {reason}",
+                    severity='critical'
+                )
+                return jsonify(success=True, applied=applied, pending={})
             except ValueError as ve:
-                return jsonify({'success': False, 'error': str(ve)}), 400
-            except ValueError as e:
-                return jsonify(success=False, error=str(e)), 400
+                return failure(str(ve), 400)
             except Exception:
                 logging.exception('API işlemi başarısız')
-                return jsonify(success=False, error='İşlem başarısız; sunucu günlüğünü kontrol edin'), 500
+                return failure('İşlem başarısız; sunucu günlüğünü kontrol edin', 500)
 
         @self.app.route('/api/ueba_profiles', methods=['GET'])
         def api_ueba_profiles():
@@ -500,12 +536,23 @@ class IPSWebApp:
                     if ip:
                         if self.blocker.unblock_ip(ip) is False:
                             return jsonify(success=False, error='IP engeli kaldırılamadı'), 409
-                        if hasattr(self, 'tarpit'):
-                            self.tarpit.untarpit_ip(ip)
-                        if hasattr(self, 'dns_sinkhole'):
-                            self.dns_sinkhole.remove_quarantine_redirect(ip)
-                        if hasattr(self.blocker, 'unrate_limit_ip'):
-                            self.blocker.unrate_limit_ip(ip)
+                        failed = []
+                        for component, method, module in (
+                            (self.tarpit, 'untarpit_ip', 'tarpit'),
+                            (self.dns_sinkhole, 'remove_quarantine_redirect', 'quarantine'),
+                            (self.blocker, 'unrate_limit_ip', 'rate_limit'),
+                        ):
+                            try:
+                                if getattr(component, method)(ip) is False:
+                                    failed.append(module)
+                                else:
+                                    self.active_defense_mgr.remove_rule_by_target(module, ip)
+                            except Exception:
+                                logging.exception('%s kuralı kaldırılamadı: %s', module, ip)
+                                failed.append(module)
+                        if failed:
+                            return jsonify(success=False, error='Bazı savunma kuralları kaldırılamadı',
+                                           remaining_modules=failed), 503
                     if mac:
                         if self.blocker.unblock_mac(mac) is False:
                             return jsonify(success=False, error='MAC engeli kaldırılamadı'), 409
@@ -921,8 +968,22 @@ class IPSWebApp:
             cpu_usage = 0
             ram_usage = 0
 
+        capture = {}
+        for name, component in (('scapy', self.legacy_sniffer), ('tshark', self.sniffer)):
+            count = getattr(component, 'packet_count', 0)
+            last_packet = getattr(component, 'last_packet_at', None)
+            error = getattr(component, 'last_error', None)
+            capture[name] = {
+                'running': bool(component.running),
+                'packets': count if isinstance(count, int) else 0,
+                'last_packet_at': last_packet if isinstance(last_packet, (int, float)) else None,
+                'error': error if isinstance(error, str) else None,
+            }
+        capturing = self.sniffer_running and any(item['running'] for item in capture.values())
         return {
-            'sniffer_running': self.sniffer_running,
+            'sniffer_running': bool(capturing),
+            'monitoring_requested': self.sniffer_running,
+            'capture': capture,
             'mode': self.mode.upper(),
             'interface': self.interface,
             'wifi_enabled': self.wifi_enabled,
@@ -956,10 +1017,13 @@ class IPSWebApp:
 
     def _handle_alert(self, alert_data):
         """Database'den gelen alarmları WebSocket üzerinden iletir ve PCAP kaydeder."""
+        decision = self.response_policy.observe(alert_data, monitoring=self.sniffer_running)
+        if decision is not None:
+            alert_data['response'] = decision
         if alert_data.get('severity', '').lower() in {'critical', 'kritik'} and self.sniffer_running:
             pcap_filename = f"alert_{alert_data['id']}.pcap"
             pcap_dir = self.pcap_dir
-            os.makedirs(pcap_dir, exist_ok=True)
+            os.makedirs(pcap_dir, mode=0o700, exist_ok=True)
             pcap_path = os.path.join(pcap_dir, pcap_filename)
             
             if self.legacy_sniffer.dump_pcap(pcap_path):
@@ -977,6 +1041,11 @@ class IPSWebApp:
 
     def _start_monitoring(self):
         if self.sniffer_running:
+            # An exited capture backend must be restartable from the panel.
+            if not self.sniffer.running:
+                self.sniffer.start()
+            if not self.legacy_sniffer.running:
+                self.legacy_sniffer.start()
             return
         if self._closed:
             raise RuntimeError('Uygulama kapatıldı')

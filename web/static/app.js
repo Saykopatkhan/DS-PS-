@@ -56,6 +56,8 @@ apiFetch("/api/ws_token", {
 
     socket.on("connect", () => {
       console.log("[DS IPS] WebSocket bağlantısı kuruldu");
+      socket.emit("request_stats");
+      fetchRecordsForTrafficList();
     });
 
     socket.on("disconnect", () => {
@@ -264,11 +266,14 @@ let radarCtx = null;
 let radarBlips = []; // {x, y, label, severity, age}
 let radarFrame = null;
 let radarVisible = true;
+let radarLastFrame = null;
+let radarExpiryTimer = null;
 const radarMotion = matchMedia("(prefers-reduced-motion: reduce)");
 function refreshRadar() {
   if (radarFrame !== null) cancelAnimationFrame(radarFrame);
   radarFrame = null;
-  drawRadar();
+  radarLastFrame = null;
+  drawRadar(performance.now());
 }
 radarMotion.addEventListener("change", refreshRadar);
 document.addEventListener("visibilitychange", refreshRadar);
@@ -293,7 +298,8 @@ function initCanvasRadar() {
   refreshRadar();
 }
 
-function drawRadar() {
+function drawRadar(timestamp = performance.now()) {
+  radarFrame = null;
   if (!radarCtx || !radarCanvas) return;
   const W = radarCanvas.width;
   const H = radarCanvas.height;
@@ -370,6 +376,8 @@ function drawRadar() {
   // Blip'leri çiz
   radarBlips = radarBlips.filter((b) => Date.now() - b.created < 4000);
   radarBlips.forEach((b) => {
+    const x = cx + b.x * R;
+    const y = cy + b.y * R;
     const alpha = radarMotion.matches
       ? 1
       : Math.max(0, 1 - (Date.now() - b.created) / 4000);
@@ -384,54 +392,82 @@ function drawRadar() {
     }
 
     // Glow
-    const grd = radarCtx.createRadialGradient(b.x, b.y, 0, b.x, b.y, glowR);
+    const grd = radarCtx.createRadialGradient(x, y, 0, x, y, glowR);
     grd.addColorStop(0, color);
     grd.addColorStop(1, "transparent");
     radarCtx.beginPath();
-    radarCtx.arc(b.x, b.y, glowR, 0, Math.PI * 2);
+    radarCtx.arc(x, y, glowR, 0, Math.PI * 2);
     radarCtx.fillStyle = grd;
     radarCtx.fill();
 
     // Nokta
     radarCtx.beginPath();
-    radarCtx.arc(b.x, b.y, 4, 0, Math.PI * 2);
+    radarCtx.arc(x, y, 4, 0, Math.PI * 2);
     radarCtx.fillStyle = color;
     radarCtx.fill();
 
     // Etiket
     radarCtx.fillStyle = color;
     radarCtx.font = "9px monospace";
-    radarCtx.fillText(b.label, b.x + 7, b.y - 4);
+    radarCtx.fillText(b.label, Math.min(x + 7, W - 125), Math.max(12, y - 4));
   });
 
-  if (isRunning && !radarMotion.matches) radarAngle += 0.012;
-  if (radarAngle > Math.PI * 2) radarAngle -= Math.PI * 2;
-  radarFrame = null;
-  if (!radarMotion.matches && !document.hidden && radarVisible)
+  const moving =
+    isRunning && !radarMotion.matches && !document.hidden && radarVisible;
+  if (moving) {
+    if (radarLastFrame !== null)
+      radarAngle =
+        (radarAngle + Math.min(100, timestamp - radarLastFrame) * 0.00072) %
+        (Math.PI * 2);
+    radarLastFrame = timestamp;
+  } else radarLastFrame = null;
+  if (
+    !radarMotion.matches &&
+    !document.hidden &&
+    radarVisible &&
+    (moving || radarBlips.length)
+  )
     radarFrame = requestAnimationFrame(drawRadar);
 }
 
 function addRadarBlip(label, severity) {
-  if (!radarCanvas) return;
-  const W = radarCanvas.width;
-  const H = radarCanvas.height;
-  const cx = W / 2;
-  const cy = H / 2;
-  const R = Math.min(W, H) / 2 - 15;
-  const angle = Math.random() * Math.PI * 2;
-  const radius = 20 + Math.random() * (R - 20);
+  const text = String(label || "Olay").substring(0, 20);
+  const previous = radarBlips.find(
+    (blip) => blip.label === text && Date.now() - blip.created < 4000,
+  );
+  const priority = {
+    critical: 4,
+    high: 3,
+    medium: 2,
+    warning: 2,
+    low: 1,
+    info: 0,
+  };
+  if (
+    previous &&
+    (priority[previous.severity] || 0) > (priority[severity] || 0)
+  )
+    severity = previous.severity;
+  // Stable relative coordinates survive tab changes and canvas resizing.
+  let hash = 0;
+  for (const character of text)
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  const angle = ((hash % 360) * Math.PI) / 180;
+  const radius = 0.25 + ((hash >>> 8) % 60) / 100;
+  radarBlips = radarBlips.filter(
+    (blip) => blip.label !== text && Date.now() - blip.created < 4000,
+  );
   if (radarBlips.length >= 100) radarBlips.shift();
   radarBlips.push({
-    x: cx + Math.cos(angle) * radius,
-    y: cy + Math.sin(angle) * radius,
-    label: String(label || "Olay").substring(0, 20),
-    severity: severity,
+    x: Math.cos(angle) * radius,
+    y: Math.sin(angle) * radius,
+    label: text,
+    severity,
     created: Date.now(),
   });
-  if (radarMotion.matches) {
-    refreshRadar();
-    setTimeout(refreshRadar, 4100);
-  }
+  if (radarFrame === null) refreshRadar();
+  clearTimeout(radarExpiryTimer);
+  radarExpiryTimer = setTimeout(refreshRadar, 4100);
 }
 
 // GeoIP harita pin ekle
@@ -499,6 +535,7 @@ function switchMapTab(tab) {
       if (radarCanvas) {
         radarCanvas.width = radarCanvas.parentElement.clientWidth;
         radarCanvas.height = radarCanvas.parentElement.clientHeight;
+        refreshRadar();
       }
     }, 50);
   } else {
@@ -573,8 +610,8 @@ function switchMapTab(tab) {
 // DOM yüklendiğinde
 document.addEventListener("DOMContentLoaded", () => {
   // Canvas radar başlat
-  setTimeout(initCanvasRadar, 100);
-  setTimeout(initNetworkMap, 500);
+  initCanvasRadar();
+  initNetworkMap();
   loadInitialData();
 
   // CPU/RAM stats polling - her 4 saniyede bir
@@ -588,6 +625,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // İlk verileri yükle
 function loadInitialData() {
+  fetchIncidentOverview();
   apiFetch("/api/alerts", { credentials: "same-origin" })
     .then((r) => r.json())
     .then((data) => {
@@ -608,27 +646,89 @@ function loadInitialData() {
     .then((data) => updateStats(data))
     .catch((err) => console.error("İstatistikler yüklenemedi:", err));
 
-  // Harita ve cihaz listesi için ilk cihazları çek
-  apiFetch("/api/records", { credentials: "same-origin" })
-    .then((r) => r.json())
-    .then((data) => {
-      if (typeof renderDeviceList === "function") renderDeviceList(data);
-      if (typeof updateNetworkMap === "function") updateNetworkMap(data);
-    })
-    .catch((err) => console.error("Cihazlar yüklenemedi:", err));
-
-  // Cihaz listesini ve haritayı 15 saniyede bir otomatik güncelle
+  fetchRecordsForTrafficList();
   setInterval(() => {
-    apiFetch("/api/records", { credentials: "same-origin" })
-      .then((r) => r.json())
-      .then((data) => {
-        if (typeof renderDeviceList === "function") renderDeviceList(data);
-        if (typeof updateNetworkMap === "function") updateNetworkMap(data);
-      })
-      .catch((err) =>
-        console.error("Otomatik cihaz güncellemesi başarısız:", err),
-      );
-  }, 15000);
+    fetchIncidentOverview();
+    fetchRecordsForTrafficList();
+  }, 5000);
+}
+
+let incidentRequestPending = false;
+
+async function fetchIncidentOverview() {
+  const tbody = document.getElementById("incident-table-body");
+  const status = document.getElementById("response-policy-status");
+  if (!tbody || !status || incidentRequestPending) return;
+  incidentRequestPending = true;
+  try {
+    const [incidents, policy] = await Promise.all(
+      ["/api/incidents?limit=20", "/api/response-policy"].map(async (url) => {
+        const response = await apiFetch(url, { credentials: "same-origin" });
+        if (!response.ok) throw new Error("Olay verisi alınamadı");
+        return response.json();
+      }),
+    );
+    if (!Array.isArray(incidents)) throw new Error("Geçersiz olay verisi");
+    status.textContent = `Otomatik müdahale: ${policy.enabled ? "açık" : "kapalı (değerlendirme)"} · Mod: ${String(policy.mode || "—").toUpperCase()} · Deneme modu: ${policy.dry_run ? "açık" : "kapalı"}`;
+    const decisions = {
+      observe: "İzle",
+      review: "İncele",
+      block: "Engelleme hazırlanıyor",
+      pending: "Sonuç doğrulanmalı",
+      blocked: "Geçici engel uygulandı",
+      failed: "Müdahale uygulanamadı",
+    };
+    const reasons = {
+      insufficient_evidence:
+        "Yeterli bağımsız kanıt veya doğrulanmış kaynak yok",
+      automatic_response_disabled: "Otomatik müdahale kapalı",
+      passive_mode: "Pasif izleme veya deneme modu",
+      monitoring_stopped: "İzleme durdurulmuş",
+      protected_address: "Korunan adres",
+      ipv6_response_unsupported: "IPv6 için otomatik müdahale desteklenmiyor",
+      already_blocked: "Adres zaten engelli",
+      corroborated_verified_source:
+        "Doğrulanmış kaynak ve birden fazla kanıt türü",
+      firewall_not_applied: "Güvenlik duvarı engeli uygulamadı",
+      firewall_error: "Güvenlik duvarı işlemi başarısız",
+    };
+    const families = {
+      unattributed: "Kaynağı doğrulanmamış",
+      authentication: "Kimlik doğrulama",
+      honeypot: "Tuzak servisi",
+      traffic_rate: "Trafik hızı",
+      reconnaissance: "Tarama",
+      web_payload: "Uygulama içeriği",
+      threat_intelligence: "Tehdit istihbaratı",
+      dns_anomaly: "DNS anomali",
+      behavior: "Davranış",
+      observation: "Gözlem",
+    };
+    tbody.innerHTML = incidents.length
+      ? incidents
+          .slice(0, 20)
+          .map((incident) => {
+            const score = Number(incident.score);
+            const seen = new Date(Number(incident.last_seen) * 1000);
+            const signals = Object.keys(incident.signals || {})
+              .map((family) => families[family] || family)
+              .join(", ");
+            return `<tr>
+            <td><strong class="mono">${escapeHtml(incident.source_ip)}</strong><div class="device-detail">${Number.isFinite(seen.getTime()) ? escapeHtml(seen.toLocaleString("tr-TR")) : "—"}</div><div class="device-detail">${incident.active ? "Değerlendirme sürüyor" : "Değerlendirme penceresi kapandı"}</div></td>
+            <td>${Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : 0} / 100<div class="device-detail">${escapeHtml(signals || "Gözlem")}</div></td>
+            <td>${escapeHtml(decisions[incident.decision] || incident.decision)}<div class="device-detail">${escapeHtml(reasons[incident.reason] || incident.reason)}</div></td>
+          </tr>`;
+          })
+          .join("")
+      : '<tr><td colspan="3" class="table-empty">Henüz ilişkilendirilmiş olay yok.</td></tr>';
+  } catch (error) {
+    status.textContent =
+      "Müdahale politikası alınamadı. Yenileyerek tekrar deneyin.";
+    tbody.innerHTML =
+      '<tr><td colspan="3" class="table-empty">Olay verisi yüklenemedi.</td></tr>';
+  } finally {
+    incidentRequestPending = false;
+  }
 }
 
 // (WebSocket olayları yukarıda initialize edildi)
@@ -858,19 +958,16 @@ function updateStats(stats) {
   setText("arp-replies", repCount);
   setText("arp-gratuitous", gratCount);
 
-  // Normal ağ trafiğini (ARP) radarda gösterme
-  if (typeof window.lastTotalArpCount === "undefined") {
-    window.lastTotalArpCount = totalArpNow;
-  } else if (totalArpNow > window.lastTotalArpCount) {
-    const diff = totalArpNow - window.lastTotalArpCount;
-    const blipCount = Math.min(diff, 4); // Ekranda çok fazla blip olmasını engelle
-    for (let i = 0; i < blipCount; i++) {
-      setTimeout(() => {
-        addRadarBlip("Ağ Trafiği", "low");
-      }, i * 300); // 300ms aralıklarla radara düşür
-    }
-    window.lastTotalArpCount = totalArpNow;
-  }
+  const captures = Object.values(stats.capture || {});
+  const packetCount = captures.length
+    ? Math.max(...captures.map((item) => Number(item.packets) || 0))
+    : totalArpNow;
+  if (
+    window.lastPacketCount !== undefined &&
+    packetCount > window.lastPacketCount
+  )
+    addRadarBlip("Paket gözlemi", "low");
+  window.lastPacketCount = packetCount;
 
   // Scan istatistikleri
   const scanStats = stats.scan_stats || {};
@@ -900,6 +997,27 @@ function updateStats(stats) {
 
   // Çalışma durumunu güncelle
   updateRunningStatus(stats.sniffer_running);
+  const captureState = document.getElementById("radar-state");
+  if (captureState && stats.capture) {
+    const backends = Object.values(stats.capture);
+    const active = backends.filter((item) => item.running).length;
+    const lastSeen = Math.max(
+      0,
+      ...backends.map((item) => Number(item.last_packet_at) || 0),
+    );
+    captureState.textContent = !stats.monitoring_requested
+      ? "Yakalama durduruldu"
+      : !active
+        ? "Yakalama çalışmıyor — yeniden başlatın"
+        : `${active < backends.length ? "Kısmi yakalama" : "Yakalama etkin"} · ${lastSeen ? "Son paket " + new Date(lastSeen * 1000).toLocaleTimeString("tr-TR") : "Henüz paket yok"}`;
+    captureState.title = backends
+      .map((item) => item.error)
+      .filter(Boolean)
+      .join("; ");
+    if (radarMotion.matches) captureState.textContent += " · Hareket azaltıldı";
+    if (stats.monitoring_requested)
+      document.getElementById("stop-btn").disabled = false;
+  }
 
   // Telegram kart istatistikleri
   setText("tg-sent", stats.telegram_sent || 0);
@@ -959,7 +1077,9 @@ function updateStats(stats) {
 // ---- Çalışma Durumu ----
 
 function updateRunningStatus(running) {
+  const changed = isRunning !== Boolean(running);
   isRunning = Boolean(running);
+  if (changed || (isRunning && radarFrame === null)) refreshRadar();
   const radarState = document.getElementById("radar-state");
   if (radarState)
     radarState.textContent = running ? "Yakalama etkin" : "Yakalama durduruldu";
@@ -1061,10 +1181,14 @@ function addBan() {
         document.getElementById("ban-ip").value = "";
         document.getElementById("ban-mac").value = "";
         document.getElementById("ban-reason").value = "";
+        showNotification("Engelleme eklendi!", "success");
+      } else {
+        showNotification(data.error || "Engelleme uygulanamadı.", "error");
+      }
+      if (data.success || Object.keys(data.applied || {}).length > 0) {
         apiFetch("/api/bans", { credentials: "same-origin" })
           .then((r) => r.json())
           .then((bans) => renderBanList(bans));
-        showNotification("Engelleme eklendi!", "success");
       }
     })
     .catch((err) => showNotification("Ban hatası: " + err, "error"));
@@ -1173,10 +1297,7 @@ function renderDeviceList(records) {
   list.innerHTML =
     devices
       .map((device) => {
-        const stamp = String(device.last_seen || "").replace(" ", "T");
-        const lastSeen = new Date(
-          stamp + (/(Z|[+-]\\d{2}:\\d{2})$/.test(stamp) ? "" : "Z"),
-        );
+        const lastSeen = new Date(parseDeviceTime(device.last_seen));
         const recent =
           Number.isFinite(lastSeen.getTime()) &&
           Date.now() - lastSeen.getTime() < 15 * 60 * 1000;
@@ -1431,6 +1552,31 @@ function saveSettings() {
 let network = null;
 let nodes = new vis.DataSet();
 let edges = new vis.DataSet();
+const networkSlots = new Map();
+const laserTimers = new Map();
+let networkUserView = false;
+let pendingNetworkRecords = [];
+
+function parseDeviceTime(value) {
+  const stamp = String(value || "").replace(" ", "T");
+  return Date.parse(stamp + (/(Z|[+-]\d{2}:?\d{2})$/i.test(stamp) ? "" : "Z"));
+}
+
+function devicePosition(slot) {
+  let ring = 1;
+  while (slot >= 8 * ring) {
+    slot -= 8 * ring;
+    ring++;
+  }
+  const angle = (slot / (8 * ring)) * Math.PI * 2;
+  return { x: Math.cos(angle) * ring * 310, y: Math.sin(angle) * ring * 310 };
+}
+
+function fitNetworkMap() {
+  if (!network) return;
+  networkUserView = false;
+  network.fit({ animation: false });
+}
 
 function initNetworkMap() {
   if (network) return;
@@ -1440,7 +1586,10 @@ function initNetworkMap() {
   // Varsayılan Gateway/Modem node'u
   nodes.add({
     id: "gateway",
-    label: "Ağ geçidi",
+    label: "İzlenen ağ",
+    x: 0,
+    y: 0,
+    fixed: true,
     shape: "box",
     color: { background: "#172238", border: "#91a3ef" },
     font: { color: "#e6f1ff", size: 16 },
@@ -1453,25 +1602,36 @@ function initNetworkMap() {
       shape: "box",
       color: { background: "#172238", border: "#2d3d59" },
       borderWidth: 2,
-      shadow: true,
+      widthConstraint: { minimum: 170, maximum: 170 },
+      heightConstraint: { minimum: 54 },
+      margin: 10,
+      fixed: true,
+      shadow: false,
     },
     edges: {
       width: 2,
       color: { color: "#2d3d59", highlight: "#91a3ef" },
-      smooth: { type: "continuous" },
+      smooth: false,
+      dashes: true,
     },
-    physics: {
-      enabled: !radarMotion.matches,
-      stabilization: true,
-      barnesHut: { gravitationalConstant: -3000, springLength: 150 },
-    },
-    interaction: { hover: true, tooltipDelay: 100 },
+    physics: { enabled: false },
+    interaction: { hover: true, tooltipDelay: 100, dragNodes: false },
   };
 
   network = new vis.Network(container, data, options);
-  radarMotion.addEventListener("change", () =>
-    network.setOptions({ physics: { enabled: !radarMotion.matches } }),
-  );
+  network.on("dragStart", () => {
+    networkUserView = true;
+  });
+  network.on("zoom", () => {
+    networkUserView = true;
+  });
+  new ResizeObserver(() => {
+    if (container.clientWidth && container.clientHeight) {
+      network.redraw();
+      if (!networkUserView) fitNetworkMap();
+    }
+  }).observe(container);
+  updateNetworkMap(pendingNetworkRecords);
 
   // Tıklanabilir Harita (Interactive Map) Menüsü
   network.on("click", function (params) {
@@ -1535,146 +1695,107 @@ function initNetworkMap() {
 }
 
 function updateNetworkMap(records) {
+  pendingNetworkRecords = Array.isArray(records) ? records : [];
   if (!network) return;
-
-  records.forEach((device) => {
-    if (!device.ip_address || device.ip_address === "N/A") return;
-
+  const current = new Map();
+  for (const device of pendingNetworkRecords) {
     const ip = device.ip_address;
-    const vendor = device.vendor || "Bilinmiyor";
-    const os = device.os_type || "Bilinmiyor";
-
-    // Aktif / Pasif (15 Dakika)
-    let lastSeenDate = new Date(
-      (device.last_seen || "").replace(" ", "T") + "Z",
-    );
-    let isInactive = new Date() - lastSeenDate > 15 * 60 * 1000;
-
-    // Uyuyan (Pasif) cihazları haritada gösterme (varsa kaldır)
-    if (isInactive) {
-      if (nodes.get(ip)) {
-        nodes.remove(ip);
-        edges.remove(`edge_${ip}`);
-      }
-      return; // Haritaya ekleme işlemini atla
-    }
-
-    // Node rengini tehlikeye göre belirle
-    let color = { background: "#172238", border: "#91a3ef" }; // Yeşil (Güvenli)
-    if (device.threat_score > 20)
-      color = { background: "#eb7b86", border: "#ff0000" }; // Kırmızı (Tehlike)
-    else if (device.threat_score > 0)
-      color = { background: "#e9b970", border: "#ff8800" }; // Sarı (Şüpheli)
-
-    // Eğer bu cihaz modem/gateway ise, ayrı node eklemek yerine merkez node'u güncelle
-    let isGateway =
-      ip.endsWith(".1") ||
-      (device.hostname && device.hostname.includes("gateway"));
-    if (isGateway) {
-      nodes.update({
-        id: "gateway",
-        label: `🌐 Modem / Gateway\n(${ip})`,
-        title: `MAC: ${escapeHtml(device.mac_address)}\nMarka: ${escapeHtml(vendor)}\nOS: ${escapeHtml(os)}\nTehdit Skoru: ${escapeHtml(device.threat_score)}`,
-        color: color,
-      });
-      return; // Ayrı bir cihaz olarak eklemeyi atla
-    }
-
-    let iconCode = "💻";
+    const seen = parseDeviceTime(device.last_seen);
     if (
-      os.toLowerCase().includes("apple") ||
-      os.toLowerCase().includes("iphone")
+      !ip ||
+      ip === "N/A" ||
+      !Number.isFinite(seen) ||
+      Date.now() - seen >= 10 * 60 * 1000
     )
-      iconCode = "📱 (Apple)";
-    else if (os.toLowerCase().includes("android")) iconCode = "📱 (Android)";
-    else if (vendor.toLowerCase().includes("router")) iconCode = "🌐 (Router)";
-    else if (os.toLowerCase().includes("windows")) iconCode = "🖥️ (Win)";
-    else if (os.toLowerCase().includes("linux")) iconCode = "🐧 (Linux)";
-
-    // Eğer cihaz ağaçta yoksa ekle
-    if (!nodes.get(ip)) {
-      nodes.add({
-        id: ip,
-        label: `${iconCode}\n${ip}`,
-        title: `MAC: ${escapeHtml(device.mac_address)}\nMarka: ${escapeHtml(vendor)}\nOS: ${escapeHtml(os)}`,
-        shape: "box",
-        color: color,
-        font: { color: "#e6f1ff", size: 14 },
-      });
-      // Gateway'e bağla
+      continue;
+    if (!current.has(ip) || seen > parseDeviceTime(current.get(ip).last_seen))
+      current.set(ip, device);
+  }
+  let membershipChanged = false;
+  for (const id of nodes.getIds()) {
+    if (id === "gateway" || current.has(id)) continue;
+    nodes.remove(id);
+    networkSlots.delete(id);
+    for (const edge of edges.get())
+      if (edge.from === id || edge.to === id) {
+        edges.remove(edge.id);
+        clearTimeout(laserTimers.get(edge.id));
+        laserTimers.delete(edge.id);
+      }
+    membershipChanged = true;
+  }
+  const occupied = new Set(networkSlots.values());
+  for (const [ip, device] of [...current].sort(([a], [b]) =>
+    a.localeCompare(b, undefined, { numeric: true }),
+  )) {
+    if (!networkSlots.has(ip)) {
+      let slot = 0;
+      while (occupied.has(slot)) slot++;
+      occupied.add(slot);
+      networkSlots.set(ip, slot);
+      membershipChanged = true;
+    }
+    const os = String(device.os_type || "Bilinmiyor");
+    const vendor = String(device.vendor || "Bilinmiyor");
+    const caption = String(
+      device.hostname && device.hostname !== "Bilinmiyor"
+        ? device.hostname
+        : os,
+    ).slice(0, 22);
+    const position = devicePosition(networkSlots.get(ip));
+    nodes.update({
+      id: ip,
+      ...position,
+      fixed: true,
+      label: `${ip}\n${caption}`,
+      title: `MAC: ${escapeHtml(device.mac_address)}\nMarka: ${escapeHtml(vendor)}\nOS: ${escapeHtml(os)}`,
+      color: {
+        background: "#172238",
+        border:
+          device.threat_score > 20
+            ? "#eb7b86"
+            : device.threat_score > 0
+              ? "#e9b970"
+              : "#91a3ef",
+      },
+      font: { color: "#e6f1ff", size: 13 },
+    });
+    if (!edges.get(`edge_${ip}`))
       edges.add({
         id: `edge_${ip}`,
-        from: ip,
-        to: "gateway",
+        from: "gateway",
+        to: ip,
+        title: "Gözlem ilişkisi; fiziksel bağlantı doğrulanmadı",
         color: "#2d3d59",
       });
-    } else {
-      // Rengi güncelle
-      nodes.update({ id: ip, color: color });
-    }
-  });
+  }
+  if (membershipChanged && !networkUserView) fitNetworkMap();
 }
 
 function drawAttackLaser(src_ip, dst_ip, severity) {
-  if (!network || !src_ip || src_ip === "N/A") return;
-
-  const target = dst_ip && dst_ip !== "N/A" ? dst_ip : "gateway"; // Hedef yoksa modeme saldırmış say
-
-  // Node yoksa geçici oluştur
-  if (!nodes.get(src_ip)) {
-    nodes.add({ id: src_ip, label: src_ip, shape: "dot", color: "#eb7b86" });
-  }
-  if (!nodes.get(target)) {
-    nodes.add({ id: target, label: target, shape: "dot", color: "#96a6c2" });
-  }
-
-  // Lazer rengi
-  const laserColor =
-    severity === "critical"
-      ? "#ff0000"
-      : severity === "high"
-        ? "#eb7b86"
-        : "#e9b970";
-  const edgeId = `laser_${src_ip}_${target}_${Date.now()}`;
-
-  // Saldırganın üstüne ünlem ekle
-  const attackerNode = nodes.get(src_ip);
-  if (attackerNode && !attackerNode.label.includes("⚠️")) {
-    nodes.update({ id: src_ip, label: "⚠️ " + attackerNode.label });
-  }
-
-  // Saldırı oku çiz
-  edges.add({
-    id: edgeId,
+  // Never invent devices or a destination for an unattributed event.
+  if (!network || !nodes.get(src_ip) || !nodes.get(dst_ip) || src_ip === dst_ip)
+    return;
+  const id = `laser_${src_ip}_${dst_ip}`;
+  if (!laserTimers.has(id) && laserTimers.size >= 100) return;
+  clearTimeout(laserTimers.get(id));
+  edges.update({
+    id,
     from: src_ip,
-    to: target,
-    color: { color: laserColor, highlight: laserColor },
-    width: 4,
+    to: dst_ip,
+    color: severity === "critical" ? "#eb7b86" : "#e9b970",
+    width: 3,
     arrows: "to",
-    dashes: [5, 5],
+    dashes: true,
   });
-
-  // Lazer animasyonu (Kısa süre sonra sil)
-  setTimeout(() => {
-    if (edges.get(edgeId)) {
-      edges.remove(edgeId);
-    }
-  }, 1500); // 1.5 saniye ekranda kalır
+  laserTimers.set(
+    id,
+    setTimeout(() => {
+      edges.remove(id);
+      laserTimers.delete(id);
+    }, 1500),
+  );
 }
-
-// Sayfa yüklenince haritayı başlat
-function initNetworkMapDeferred() {
-  setTimeout(initNetworkMap, 500);
-}
-document.addEventListener("DOMContentLoaded", () => {
-  initNetworkMapDeferred();
-  fetchRecordsForTrafficList();
-  setInterval(() => {
-    if (document.getElementById("general-traffic-body")) {
-      fetchRecordsForTrafficList();
-    }
-  }, 15000);
-});
 
 // ---- TRAFFIC MONITOR (DS-IPS V2) ----
 let currentTrafficIp = null;
@@ -1745,25 +1866,45 @@ function appendTrafficLog(data, isHistory = false) {
 }
 
 // Genel panelde aktif cihazları sabitle
+let deviceRequestPending = null;
+let deviceSightings = new Map();
 function fetchRecordsForTrafficList() {
+  if (deviceRequestPending) return deviceRequestPending;
   const tbody = document.getElementById("general-traffic-body");
   if (!tbody) return Promise.resolve();
-  return apiFetch("/api/devices", { credentials: "same-origin" })
+  deviceRequestPending = apiFetch("/api/devices", {
+    credentials: "same-origin",
+  })
     .then((response) => {
       if (!response.ok) throw new Error("Cihaz verisi alınamadı");
       return response.json();
     })
     .then((data) => {
+      if (!Array.isArray(data)) throw new Error("Geçersiz cihaz verisi");
+      updateNetworkMap(data);
+      renderDeviceList(data);
       const devices = data.filter((device) => {
         if (!device.ip_address || device.ip_address === "N/A") return false;
-        const stamp = String(device.last_seen || "").replace(" ", "T");
-        const lastSeen = Date.parse(
-          stamp + (/(Z|[+-]\\d{2}:\\d{2})$/.test(stamp) ? "" : "Z"),
-        );
+        const lastSeen = parseDeviceTime(device.last_seen);
         return (
           Number.isFinite(lastSeen) && Date.now() - lastSeen < 10 * 60 * 1000
         );
       });
+      let shown = 0;
+      const sightings = new Map();
+      for (const device of devices) {
+        const seen = parseDeviceTime(device.last_seen);
+        sightings.set(device.ip_address, seen);
+        if (
+          isRunning &&
+          seen > (deviceSightings.get(device.ip_address) || 0) &&
+          shown < 8
+        ) {
+          addRadarBlip(device.ip_address, "low");
+          shown++;
+        }
+      }
+      deviceSightings = sightings;
       tbody.innerHTML =
         devices
           .map(
@@ -1780,7 +1921,11 @@ function fetchRecordsForTrafficList() {
     .catch(() => {
       tbody.innerHTML =
         '<tr><td colspan="2" class="table-empty">Cihazlar yüklenemedi. Yenile düğmesiyle tekrar deneyin.</td></tr>';
+    })
+    .finally(() => {
+      deviceRequestPending = null;
     });
+  return deviceRequestPending;
 }
 
 // =============================================

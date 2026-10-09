@@ -24,6 +24,7 @@ class TCPTarpit:
         self._stop_event = threading.Event()
         self._thread = None
         self._owned_rules = {}
+        self._cleanup_pending = set()
 
     def start(self):
         if self.dry_run or (self.blocker and self.blocker.dry_run):
@@ -92,13 +93,14 @@ class TCPTarpit:
         address = ipaddress.IPv4Address(ip)
         ip = str(address)
         if (address.is_loopback or address.is_unspecified or address.is_multicast
-                or (self.blocker and ip in self.blocker.whitelist)):
+                or ip == '255.255.255.255'
+                or (self.blocker and self.blocker.is_protected_ip(ip))):
             return False
         if self.dry_run or (self.blocker and self.blocker.dry_run) or not self.running:
             return False
         with self.lock:
             if ip in self.trapped_ips:
-                return True
+                return ip not in self._cleanup_pending
             if len(self.trapped_ips) >= MAX_TARPIT_IPS:
                 return False
             added = []
@@ -115,11 +117,18 @@ class TCPTarpit:
                 return True
             except (OSError, subprocess.SubprocessError):
                 logger.exception('Tarpit yönlendirme hatası')
+                remaining = list(added)
                 for table, rule in reversed(added):
                     try:
                         subprocess.run(['iptables', *table, '-D', *rule], capture_output=True, check=True, timeout=5)
+                        remaining.remove((table, rule))
                     except (OSError, subprocess.SubprocessError):
                         logger.exception('Tarpit rollback failed')
+                if remaining:
+                    # Keep failed cleanup visible and retryable via untarpit/stop.
+                    self._owned_rules[ip] = remaining
+                    self.trapped_ips.add(ip)
+                    self._cleanup_pending.add(ip)
                 return False
 
     def untarpit_ip(self, ip):
@@ -130,18 +139,25 @@ class TCPTarpit:
             rules = self._owned_rules.get(ip, [])
             for table, rule in list(reversed(rules)):
                 try:
-                    subprocess.run(['iptables', *table, '-D', *rule], capture_output=True, check=True, timeout=5)
+                    result = subprocess.run(['iptables', *table, '-C', *rule], capture_output=True, timeout=5)
+                    if result.returncode == 0:
+                        subprocess.run(['iptables', *table, '-D', *rule], capture_output=True, check=True, timeout=5)
+                    elif result.returncode != 1:
+                        raise subprocess.CalledProcessError(result.returncode, result.args)
                     rules.remove((table, rule))
                 except (OSError, subprocess.SubprocessError):
                     logger.exception('Untarpit failed')
+                    self._cleanup_pending.add(ip)
                     return False
             self._owned_rules.pop(ip, None)
             self.trapped_ips.discard(ip)
+            self._cleanup_pending.discard(ip)
             return True
 
     def get_stats(self):
         with self.lock:
             return {'active_tarpit_ips': sorted(self.trapped_ips),
+                    'cleanup_pending_ips': sorted(self._cleanup_pending),
                     'total_trapped_connections': self.total_trapped_connections,
                     'active_connections': len(self.active_connections),
                     'tarpit_count': len(self.trapped_ips)}

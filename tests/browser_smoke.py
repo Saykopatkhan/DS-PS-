@@ -6,6 +6,7 @@ and passive IDS mode; does not start packet capture or active defenses.
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -13,6 +14,85 @@ from playwright.sync_api import expect, sync_playwright
 from werkzeug.serving import make_server
 
 from web.app import IPSWebApp
+
+
+def wait_for_js(page, expression):
+    # Evaluate directly through the browser protocol: wait_for_function's
+    # internal eval is blocked by this panel's Content Security Policy.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if page.evaluate(expression):
+            return
+        page.wait_for_timeout(50)
+    raise AssertionError(f'Browser condition not reached: {expression}')
+
+
+def check_live_visuals(page, panel):
+    from datetime import datetime, timezone
+    stamp = datetime.now(timezone.utc).isoformat()
+    records = [{'ip_address': f'192.0.2.{i}', 'mac_address': f'02:00:00:00:00:{i:02x}',
+                'hostname': f'Client {i}', 'last_seen': stamp, 'os_type': 'Linux'} for i in range(1, 101)]
+    stats = panel._get_stats()
+    stats.update(sniffer_running=True, monitoring_requested=True,
+                 capture={'scapy': {'running': True, 'packets': 20, 'last_packet_at': 1000},
+                          'tshark': {'running': True, 'packets': 20, 'last_packet_at': 1000}})
+    page.route('**/api/devices', lambda route: route.fulfill(json=records))
+    page.route('**/api/stats', lambda route: route.fulfill(json=stats))
+    try:
+        page.reload()
+        wait_for_js(page, 'nodes.length === 101')
+        assert page.locator('#general-traffic-body tr').count() == 100
+        assert page.evaluate('nodes.get("192.0.2.1") !== null')
+        # Fixed measured node boxes cannot overlap, including reduced motion.
+        def check_nodes():
+            assert page.evaluate('''() => {
+                const boxes = nodes.getIds().map(id => network.getBoundingBox(id));
+                return boxes.every((a, i) => boxes.slice(i + 1).every(b =>
+                    a.right < b.left || b.right < a.left || a.bottom < b.top || b.bottom < a.top));
+            }'''), 'Device boxes overlap'
+        check_nodes()
+        before = page.evaluate('network.getPositions()')
+        page.evaluate('fetchRecordsForTrafficList()')
+        assert page.evaluate('network.getPositions()') == before
+        page.emulate_media(reduced_motion='reduce')
+        page.wait_for_timeout(100)
+        check_nodes()
+        assert page.evaluate('radarFrame === null')
+        page.emulate_media(reduced_motion='no-preference')
+        page.locator('#radar-canvas').scroll_into_view_if_needed()
+        wait_for_js(page, 'isRunning && radarFrame !== null')
+        angle = page.evaluate('radarAngle')
+        page.wait_for_timeout(180)
+        assert page.evaluate('radarAngle') != angle
+        page.locator('#tab-geo').click()
+        page.wait_for_timeout(120)
+        page.locator('#tab-radar').click()
+        page.wait_for_timeout(180)
+        angle = page.evaluate('radarAngle')
+        page.wait_for_timeout(180)
+        assert page.evaluate('radarAngle') != angle
+        panel.socketio.emit('new_alert', {'id': 999, 'source_ip': '192.0.2.2',
+            'destination_ip': '192.0.2.3', 'alert_type': 'Visual observation',
+            'severity': 'low', 'description': 'Offline fixture'})
+        wait_for_js(page, 'radarBlips.some(b => b.label === "192.0.2.2")')
+        page.evaluate('addRadarBlip("192.0.2.2", "critical"); addRadarBlip("192.0.2.2", "low")')
+        assert page.evaluate('radarBlips.find(b => b.label === "192.0.2.2").severity') == 'critical'
+        page.evaluate('drawAttackLaser("198.51.100.2", "198.51.100.3", "high")')
+        assert page.evaluate('nodes.length') == 101
+        page.evaluate('updateNetworkMap([])')
+        assert page.evaluate('nodes.getIds()') == ['gateway']
+        assert page.evaluate('edges.length') == 0
+        page.set_viewport_size({'width': 390, 'height': 844})
+        page.evaluate('fetchRecordsForTrafficList()')
+        wait_for_js(page, 'nodes.length === 101')
+        check_nodes()
+        check_layout(page)
+    finally:
+        page.unroute('**/api/devices')
+        page.unroute('**/api/stats')
+        page.set_viewport_size({'width': 1440, 'height': 1000})
+        page.reload()
+        wait_for_js(page, 'socket && socket.connected')
 
 
 def check_layout(page):
@@ -72,6 +152,7 @@ def main():
                 assert not page.locator('[data-toggle-nav]').is_visible()
                 check_layout(page)
                 screenshot(page, 'dashboard-desktop')
+                check_live_visuals(page, panel)
                 page.locator('#tab-geo').click()
                 page.locator('#leaflet-map path').first.wait_for(state='attached')
                 assert page.evaluate('geoMapInitialized && Boolean(geoMap)')
@@ -89,6 +170,11 @@ def main():
                 page.evaluate("async () => renderDeviceList(await (await apiFetch('/api/devices')).json())")
                 assert payload in page.locator('#scanner-list').inner_text()
                 assert page.locator('#hids-alerts').inner_text() == '0'
+                # The correlated incident UI is advisory in default IDS mode.
+                page.evaluate('fetchIncidentOverview()')
+                expect(page.locator('#response-policy-status')).to_contain_text('kapalı (değerlendirme)')
+                expect(page.locator('#incident-table-body')).to_contain_text('192.0.2.10')
+                expect(page.locator('#incident-table-body')).to_contain_text('İzle')
                 page.evaluate("filterAlerts('critical')")
                 page.evaluate("addAlertToFeed({severity:'low', alert_type:'Filter regression', description:'Hidden event'}, true)")
                 assert not page.locator('.alert-item').filter(has_text='Filter regression').is_visible()

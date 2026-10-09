@@ -12,7 +12,7 @@ import os
 import re
 import ipaddress
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from colorama import Fore, Style
 from core.database import Database
 
@@ -87,8 +87,21 @@ class Blocker:
         try:
             with open('/etc/dsips/config.json') as stream:
                 cfg = json.load(stream)
-            for ip in cfg.get('whitelisted_ips', []):
-                self.whitelist.add(str(ipaddress.ip_address(ip)))
+            if not isinstance(cfg, dict):
+                return
+            entries = cfg.get('whitelisted_ips', [])
+            if not isinstance(entries, list):
+                entries = []
+            for entry in entries:
+                try:
+                    if not isinstance(entry, str):
+                        raise ValueError('Address must be a string')
+                    # Keep valid entries even if another item is malformed.
+                    parsed = (ipaddress.ip_network(entry, strict=False) if '/' in entry
+                              else ipaddress.ip_address(entry))
+                    self.whitelist.add(str(parsed))
+                except (ValueError, TypeError):
+                    logging.warning('Invalid allowlist entry ignored: %r', entry)
             for key, severity in [('block_critical', 'critical'), ('block_high', 'high'), ('block_ddos', 'medium')]:
                 value = cfg.get(key)
                 if isinstance(value, int) and not isinstance(value, bool) and value > 0:
@@ -100,10 +113,24 @@ class Blocker:
     def get_ban_duration(self, severity='medium'):
         return self.BAN_DURATIONS.get(str(severity).lower(), self.auto_unban_time)
 
+    def is_protected_ip(self, ip):
+        """Return whether an address is infrastructure or in the IP/CIDR allowlist."""
+        address = ipaddress.ip_address(ip)
+        if (address.is_loopback or address.is_unspecified or address.is_multicast
+                or str(address) == '255.255.255.255'):
+            return True
+        for entry in tuple(self.whitelist):
+            try:
+                if address in ipaddress.ip_network(entry, strict=False):
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
+
     def _validate_ip(self, ip, protected=False):
         address = ipaddress.IPv4Address(ip)
         value = str(address)
-        if protected and (value in self.whitelist or address.is_loopback or address.is_unspecified or address.is_multicast or value == '255.255.255.255'):
+        if protected and self.is_protected_ip(value):
             raise ValueError(f"Korumalı IP engellenemez: {value}")
         return value
 
@@ -149,45 +176,115 @@ class Blocker:
             return False
 
     def _load_active_bans(self):
+        active, stale = {}, []
         for ban in self.db.get_active_bans():
             ip, mac = ban.get('ip_address'), ban.get('mac_address')
+            validated = False
             try:
-                ip = self._validate_ip(ip, protected=True) if ip else None
-                mac = self._validate_mac(mac, protected=True) if mac else None
-                expiry = ban.get('expires_at')
-                remaining = self.auto_unban_time
-                if expiry:
-                    remaining = int((datetime.fromisoformat(expiry) - datetime.utcnow()).total_seconds())
-                if remaining <= 0 or str(ban.get('reason', '')).startswith('[DRY RUN]'):
-                    self.db.remove_ban(ip=ip, mac=mac)
-                    if mac:
-                        for rule in self._mac_rules(mac):
-                            self._delete_rule(rule)
+                ip = self._validate_ip(ip) if ip else None
+                mac = self._validate_mac(mac) if mac else None
+                validated = True
+                if not ip and not mac:
+                    self.db.remove_ban_by_id(ban['id'])
                     continue
+                expiry = ban.get('expires_at')
+                now = datetime.now(timezone.utc)
+                if expiry:
+                    deadline = datetime.fromisoformat(expiry)
+                else:
+                    # Old rows without expires_at must not gain a fresh full
+                    # lifetime on every service restart.
+                    created = datetime.fromisoformat(ban['ban_time'])
+                    deadline = created + timedelta(seconds=self.auto_unban_time)
+                if deadline.tzinfo is None:
+                    deadline = deadline.replace(tzinfo=timezone.utc)
+                remaining = int((deadline - now).total_seconds())
+                protected = bool(ip and self.is_protected_ip(ip))
+                try:
+                    if mac:
+                        self._validate_mac(mac, protected=True)
+                except ValueError:
+                    protected = True
+                if protected or remaining <= 0 or str(ban.get('reason', '')).startswith('[DRY RUN]'):
+                    stale.append((ban['id'], ip, mac))
+                else:
+                    target = (ip, mac)
+                    active[target] = max(active.get(target, 0), remaining)
+            except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
+                logging.exception('Unable to restore ban for %s/%s', ip, mac)
+                if validated and ban.get('id') is not None:
+                    # Corrupt timestamps cannot create an unbounded kernel ban.
+                    stale.append((ban['id'], ip, mac))
+        active_ips = {ip for ip, _ in active if ip}
+        active_macs = {mac for _, mac in active if mac}
+        for ban_id, ip, mac in stale:
+            try:
+                # An expired historical row must not cancel a newer valid ban.
+                if ip and ip not in active_ips:
+                    self._run(['ipset', 'del', self.SET_NAME, ip, '-exist'])
+                if mac and mac not in active_macs:
+                    for rule in self._mac_rules(mac):
+                        self._delete_rule(rule)
+                self.db.remove_ban_by_id(ban_id)
+            except (OSError, subprocess.SubprocessError):
+                logging.exception('Unable to clean up expired ban %s', ban_id)
+                # Keep stale rules owned even when the firewall is temporarily
+                # unavailable. The expiry worker will retry after startup.
+                if ip:
+                    self.blocked_ips.add(ip)
+                if mac:
+                    self.blocked_macs.add(mac)
+                self._expires[(ip, mac)] = time.monotonic()
+        # Restore longest overlapping IP timeouts last; shorter duplicates must
+        # never shorten the effective lifetime of a later valid ban.
+        for (ip, mac), remaining in sorted(active.items(), key=lambda item: item[1]):
+            try:
                 self._apply_ban(ip, mac, remaining)
             except (ValueError, OSError, subprocess.SubprocessError):
                 logging.exception('Unable to restore ban for %s/%s', ip, mac)
 
     def _apply_ban(self, ip, mac, duration):
+        if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+            raise ValueError('Ban süresi pozitif bir tam sayı olmalı')
+        previous_ip_expiry = max((deadline for target, deadline in self._expires.items()
+                                  if ip and target[0] == ip), default=None)
         added = []
+        ip_applied = False
         try:
             if ip:
                 self._run(['ipset', 'add', self.SET_NAME, ip, 'timeout', str(max(1, int(duration))), '-exist'])
+                ip_applied = True
             if mac:
                 for rule in self._mac_rules(mac):
                     if self._ensure_rule(rule):
                         added.append(rule)
-        except Exception:
+        except Exception as error:
+            pending_ip = pending_mac = None
             for rule in reversed(added):
                 try:
                     self._delete_rule(rule)
                 except (OSError, subprocess.SubprocessError):
+                    pending_mac = mac
                     logging.exception('Firewall rollback failed')
-            if ip:
+            if ip and (ip_applied or isinstance(error, subprocess.TimeoutExpired)):
                 try:
-                    self._run(['ipset', 'del', self.SET_NAME, ip, '-exist'])
+                    if previous_ip_expiry is None:
+                        self._run(['ipset', 'del', self.SET_NAME, ip, '-exist'])
+                    else:
+                        remaining = max(1, int(previous_ip_expiry - time.monotonic()) + 1)
+                        self._run(['ipset', 'add', self.SET_NAME, ip, 'timeout', str(remaining), '-exist'])
                 except (OSError, subprocess.SubprocessError):
+                    if previous_ip_expiry is None:
+                        pending_ip = ip
                     logging.exception('IP set rollback failed')
+            if pending_ip or pending_mac:
+                # A failed rollback still owns rules. Retain them for the
+                # expiry worker/cleanup path instead of silently orphaning them.
+                if pending_ip:
+                    self.blocked_ips.add(pending_ip)
+                if pending_mac:
+                    self.blocked_macs.add(pending_mac)
+                self._expires[(pending_ip, pending_mac)] = time.monotonic()
             raise
         if ip:
             self.blocked_ips.add(ip)
@@ -203,16 +300,19 @@ class Blocker:
         if self.dry_run or not self.running:
             return False
         with self.lock:
-            if ip in self.blocked_ips:
+            if self.dry_run or not self.running or ip in self.blocked_ips:
                 return False
             try:
-                mac = self._resolve_mac_for_ip(ip)
-                mac = self._validate_mac(mac, protected=True) if mac else None
                 duration = self.get_ban_duration(severity)
-                self._apply_ban(ip, mac, duration)
-                self.db.add_ban(ip, mac, reason, duration=duration)
-                if self.active_defense_mgr:
-                    self.active_defense_mgr.add_rule('block_ip', target_ip=ip, target_mac=mac, parameters={'reason': reason})
+                # A source IP can share its observed MAC with many other hosts
+                # behind a router. An IP decision must remain IP scoped.
+                self._apply_ban(ip, None, duration)
+                try:
+                    self.db.add_ban(ip, None, reason, duration=duration)
+                except Exception:
+                    self._remove_ban(ip, None)
+                    raise
+                self._record_defense('block_ip', ip, None, reason)
                 return True
             except Exception:
                 logging.exception('IP engelleme başarısız: %s', ip)
@@ -223,45 +323,75 @@ class Blocker:
         if self.dry_run or not self.running:
             return False
         with self.lock:
-            if mac in self.blocked_macs:
+            if self.dry_run or not self.running or mac in self.blocked_macs:
                 return False
             try:
                 ip = self._resolve_ip_for_mac(mac)
                 ip = self._validate_ip(ip, protected=True) if ip else None
                 duration = self.get_ban_duration(severity)
-                self._apply_ban(ip, mac, duration)
-                self.db.add_ban(ip, mac, reason, duration=duration)
-                if self.active_defense_mgr:
-                    self.active_defense_mgr.add_rule('block_mac', target_ip=ip, target_mac=mac, parameters={'reason': reason})
+                self._apply_ban(None, mac, duration)
+                try:
+                    self.db.add_ban(None, mac, reason, duration=duration)
+                except Exception:
+                    self._remove_ban(None, mac)
+                    raise
+                self._record_defense('block_mac', None, mac, reason)
                 return True
             except Exception:
                 logging.exception('MAC engelleme başarısız: %s', mac)
                 return False
+
+    def _record_defense(self, module, ip, mac, reason):
+        if self.active_defense_mgr:
+            try:
+                self.active_defense_mgr.add_rule(module, target_ip=ip, target_mac=mac,
+                                                 parameters={'reason': reason})
+            except Exception:
+                # The durable ban and its expiry already exist. A secondary UI
+                # ledger failure must not misreport the firewall result.
+                logging.exception('Unable to record active defense metadata')
 
     def _remove_ban(self, ip, mac):
         if self.dry_run or not self._check_root():
             return False
         with self.lock:
             try:
-                if ip:
+                target = (ip, mac)
+                others = [item for item in self._expires if item != target]
+                remove_ip = ip and not any(item[0] == ip for item in others)
+                remove_mac = mac and not any(item[1] == mac for item in others)
+                if remove_ip:
                     self._run(['ipset', 'del', self.SET_NAME, ip, '-exist'])
-                if mac:
+                if remove_mac:
                     for rule in self._mac_rules(mac):
                         self._delete_rule(rule)
-                self.db.remove_ban(ip=ip, mac=mac)
-                self.blocked_ips.discard(ip)
-                self.blocked_macs.discard(mac)
-                self.intercepted_macs.discard(mac)
-                for target in list(self._expires):
-                    if (ip and target[0] == ip) or (mac and target[1] == mac):
-                        del self._expires[target]
+                for ban in self.db.get_active_bans():
+                    saved_mac = ban.get('mac_address')
+                    saved_mac = saved_mac.lower() if saved_mac else None
+                    if (ban.get('ip_address') or None, saved_mac) == target:
+                        self.db.remove_ban_by_id(ban['id'])
+                if remove_ip:
+                    self.blocked_ips.discard(ip)
+                if remove_mac:
+                    self.blocked_macs.discard(mac)
+                    self.intercepted_macs.discard(mac)
+                self._expires.pop(target, None)
                 if self.active_defense_mgr:
-                    if ip:
-                        for module in ('block_ip', 'block_mac'):
-                            self.active_defense_mgr.remove_rule_by_target(module, ip)
-                    if mac:
-                        self.active_defense_mgr.remove_rule_by_target('block_mac', target_mac=mac)
-                self._restore_arp(ip, mac)
+                    try:
+                        if remove_ip:
+                            for module in ('block_ip', 'block_mac'):
+                                self.active_defense_mgr.remove_rule_by_target(module, ip)
+                        if remove_mac:
+                            self.active_defense_mgr.remove_rule_by_target('block_mac', target_mac=mac)
+                    except Exception:
+                        logging.exception('Unable to remove active defense metadata')
+                if remove_mac:
+                    self._restore_arp(ip or self.ip_mac_map.get(mac), mac)
+                if self.db.socketio:
+                    try:
+                        self.db.socketio.emit('ban_update', {'action': 'removed', 'ip': ip, 'mac': mac}, namespace='/')
+                    except Exception:
+                        logging.exception('Unable to publish ban removal')
                 return True
             except Exception:
                 logging.exception('Ban removal failed: %s/%s', ip, mac)
@@ -269,18 +399,33 @@ class Blocker:
 
     def unblock_ip(self, ip):
         ip = self._validate_ip(ip)
-        return self._remove_ban(ip, self.mac_ip_map.get(ip))
+        with self.lock:
+            targets = [target for target in self._expires if target[0] == ip]
+            if not targets:
+                targets = [(ip, None)]
+            return all([self._remove_ban(*target) for target in targets])
 
     def unblock_mac(self, mac):
         mac = self._validate_mac(mac)
-        return self._remove_ban(self.ip_mac_map.get(mac), mac)
+        with self.lock:
+            targets = [target for target in self._expires if target[1] == mac]
+            if not targets:
+                targets = [(None, mac)]
+            return all([self._remove_ban(*target) for target in targets])
+
+    def expire_bans(self):
+        """Reconcile expired and newly protected targets under the policy lock."""
+        removed = 0
+        with self.lock:
+            now = time.monotonic()
+            for (ip, mac), deadline in list(self._expires.items()):
+                if deadline <= now or (ip and self.is_protected_ip(ip)):
+                    removed += bool(self._remove_ban(ip, mac))
+        return removed
 
     def _expiry_loop(self):
         while not self._stop_event.wait(1):
-            with self.lock:
-                expired = [target for target, deadline in self._expires.items() if deadline <= time.monotonic()]
-            for ip, mac in expired:
-                self._remove_ban(ip, mac)
+            self.expire_bans()
 
     def _restore_arp(self, ip, mac):
         if self.dry_run or not all((ip, mac, self.gateway_ip, self.gateway_mac, self._scapy_available)):
@@ -319,7 +464,10 @@ class Blocker:
         rules = []
         for chain, direction in [('FORWARD', '-d'), ('FORWARD', '-s'), ('INPUT', '-s')]:
             base = [chain, direction, ip, '-m', 'comment', '--comment', 'dsips-rate']
-            rules += [base + ['-m', 'limit', '--limit', rate, '-j', 'ACCEPT'], base + ['-j', 'DROP']]
+            name = f'ds_{int(ipaddress.IPv4Address(ip)):08x}_{chain[0]}{direction[1]}'
+            rules.append(base + ['-m', 'hashlimit', '--hashlimit-above', rate,
+                                 '--hashlimit-mode', 'srcip' if direction == '-s' else 'dstip',
+                                 '--hashlimit-name', name, '-j', 'DROP'])
         return rules
 
     def rate_limit_ip(self, ip, rate='1/s'):
@@ -329,25 +477,32 @@ class Blocker:
         if self.dry_run or not self.running:
             return False
         with self.lock:
-            if ip in self._rate_rules:
+            if self.dry_run or not self.running or ip in self._rate_rules:
                 return False
             added = []
             try:
-                # Reverse insertion preserves ACCEPT-before-DROP order at the top
-                # of each chain, ahead of gateway-wide ACCEPT rules.
+                # Only excess traffic terminates here. Traffic below the limit
+                # must still pass the existing firewall's authorization rules.
                 for rule in reversed(self._limit_rules(ip, rate)):
                     if self._ensure_rule(rule):
                         added.append(rule)
                 self._rate_rules[ip] = rate
                 if self.active_defense_mgr:
-                    self.active_defense_mgr.add_rule('rate_limit', target_ip=ip, parameters={'rate': rate})
+                    try:
+                        self.active_defense_mgr.add_rule('rate_limit', target_ip=ip, parameters={'rate': rate})
+                    except Exception:
+                        logging.exception('Unable to record rate-limit metadata')
                 return True
             except Exception:
+                cleanup_failed = False
                 for rule in reversed(added):
                     try:
                         self._delete_rule(rule)
                     except Exception:
+                        cleanup_failed = True
                         logging.exception('Rate-limit rollback failed')
+                if cleanup_failed:
+                    self._rate_rules[ip] = rate
                 return False
 
     def unrate_limit_ip(self, ip, rate='1/s'):
@@ -361,7 +516,10 @@ class Blocker:
                     self._delete_rule(rule)
                 self._rate_rules.pop(ip, None)
                 if self.active_defense_mgr:
-                    self.active_defense_mgr.remove_rule_by_target('rate_limit', ip)
+                    try:
+                        self.active_defense_mgr.remove_rule_by_target('rate_limit', ip)
+                    except Exception:
+                        logging.exception('Unable to remove rate-limit metadata')
                 self.stop_intercept_ip(ip)
                 return True
             except Exception:
@@ -421,8 +579,9 @@ class Blocker:
             return {'ips': sorted(self.blocked_ips), 'macs': sorted(self.blocked_macs)}
 
     def stop(self):
-        self.running = False
-        self._stop_event.set()
+        with self.lock:
+            self.running = False
+            self._stop_event.set()
         for thread in (self.arp_thread, self.expiry_thread):
             if thread and thread is not threading.current_thread():
                 thread.join(timeout=4)
