@@ -11,7 +11,8 @@ Saldırganların ban yememek için sürekli MAC adresi değiştirmesini (MAC Ran
 veya ağda MAC Flooding yapmasını tespit eder.
 """
 import time
-from scapy.all import Ether
+import ipaddress
+from scapy.all import Ether, IP
 from core.database import Database
 from utils.sound import SoundAlert
 
@@ -25,39 +26,52 @@ class AntiEvasionDetector:
         self.recent_macs = {}
         self.mac_flood_threshold = 10 # 10 saniyede 10 farklı yeni MAC gelirse şüpheli
         self.time_window = 10.0 # saniye
+        self.last_cleanup = time.time()
 
     def analyze(self, packet):
-        if not packet.haslayer(Ether):
+        if not packet.haslayer(Ether) or not packet.haslayer(IP):
             return
-            
-        src_mac = packet[Ether].src
+        src_ip = packet[IP].src
+        src_mac = packet[Ether].src.lower()
+        try:
+            address = ipaddress.ip_address(src_ip)
+            if address.is_unspecified or address.is_multicast:
+                return
+        except ValueError:
+            return
         now = time.time()
-        
-        # Sadece yeni gördüğümüz MAC'leri veya zamanı güncelliyoruz
-        if src_mac not in self.recent_macs:
-            self.recent_macs[src_mac] = now
-            
-        # Pencere dışı (eski) MAC'leri temizle
         self._cleanup_old_macs(now)
-        
-        # Kalan yeni MAC sayısına bak
-        if len(self.recent_macs) >= self.mac_flood_threshold:
-            self._trigger_alert(src_mac, len(self.recent_macs))
-            # Uyarıyı sürekli patlatmamak için listeyi temizle
-            self.recent_macs.clear()
+        if src_ip not in self.recent_macs and len(self.recent_macs) >= 10000:
+            self.recent_macs.pop(next(iter(self.recent_macs)))
+        macs = self.recent_macs.setdefault(src_ip, {})
+        for mac in list(macs):
+            if now - macs[mac] >= self.time_window:
+                del macs[mac]
+        macs[src_mac] = now
+        count = len(macs)
+        if count >= self.mac_flood_threshold:
+            self._trigger_alert(src_ip, src_mac, count)
+            self.recent_macs.pop(src_ip, None)
 
     def _cleanup_old_macs(self, now):
-        expired = [mac for mac, ts in self.recent_macs.items() if now - ts > self.time_window]
-        for mac in expired:
-            del self.recent_macs[mac]
+        if now - self.last_cleanup < 1.0:
+            return
+        for src_ip, macs in list(self.recent_macs.items()):
+            for mac in list(macs):
+                if now - macs[mac] >= self.time_window:
+                    del macs[mac]
+            if not macs:
+                del self.recent_macs[src_ip]
+        self.last_cleanup = now
 
-    def _trigger_alert(self, last_mac, count):
-        desc = f"DİKKAT: Cihazın IP ve MAC adresleri sürekli değişiyor! Son {int(self.time_window)} saniyede {count} farklı sahte kimlikle ağa girmeye çalıştı. Lütfen bu tehdidi anında BANLAYIN!"
+    def _trigger_alert(self, src_ip, last_mac, count):
         self.db.add_alert(
             alert_type='MAC Spoofing (Anti-Evasion)',
-            src_ip='N/A', src_mac=last_mac,
+            src_ip=src_ip, src_mac=last_mac,
             dst_ip='N/A', dst_mac='N/A',
-            description=desc,
-            severity='high'
+            description=f'Aynı IP ({src_ip}) için son {self.time_window:g} saniyede '
+                        f'{count} farklı kaynak MAC gözlendi. Ağ geçidi/yedeklilik '
+                        'değişimleriyle karşılaştırılmalı; kimlik sahteciliği doğrulanmadı.',
+            severity='warning'
         )
-        SoundAlert.alert_attack("MAC Spoofing İhlali")
+        SoundAlert.alert_attack("MAC adres değişimi")

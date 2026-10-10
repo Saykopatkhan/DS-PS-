@@ -1,0 +1,30 @@
+{% macro icon(name, cls='') -%}
+<svg class="icon {{ cls }}" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+{% if name == 'shield' %}<path d="M12 3 3.5 6.5v5c0 5 8.5 9.5 8.5 9.5s8.5-4.5 8.5-9.5v-5L12 3Z"/><path d="m8 12 3 3 5-6"/>
+{% elif name == 'grid' %}<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+{% elif name == 'activity' %}<path d="M2 12h4l3-8 6 16 3-8h4"/>
+{% elif name == 'network' %}<rect x="8" y="2" width="8" height="6" rx="1.5"/><rect x="2" y="16" width="7" height="6" rx="1.5"/><rect x="15" y="16" width="7" height="6" rx="1.5"/><path d="M12 8v4H5.5v4M12 12h6.5v4"/>
+{% elif name == 'bell' %}<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>
+{% elif name == 'cpu' %}<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4M18 9h4m-4 6h4"/><rect x="9" y="9" width="6" height="6" rx="1"/>
+{% elif name == 'settings' %}<path d="M4 7h16M4 17h16"/><rect x="8" y="4" width="4" height="6" rx="1"/><rect x="14" y="14" width="4" height="6" rx="1"/>
+{% elif name == 'arrow' %}<path d="M5 12h14m-5-5 5 5-5 5"/>
+{% elif name == 'download' %}<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>
+{% elif name == 'logout' %}<path d="M9 3H4v18h5M9 12h12m-4-4 4 4-4 4"/>
+{% elif name == 'menu' %}<path d="M4 6h16M4 12h16M4 18h16"/>
+{% elif name == 'close' %}<path d="m6 6 12 12M6 18 18 6"/>
+{% elif name == 'clock' %}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+{% elif name == 'lock' %}<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/>
+{% elif name == 'refresh' %}<path d="M20 8a8 8 0 1 0 0 8M20 3v5h-5"/>
+{% elif name == 'wifi' %}<path d="M2 8a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r=".7"/>
+{% elif name == 'search' %}<circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/>
+{% elif name == 'chart' %}<path d="M4 3v18h17M8 16v-5m5 5V6m5 10v-8"/>
+{% elif name == 'play' %}<path d="m8 4 12 8-12 8V4Z"/>
+{% elif name == 'stop' %}<rect x="5" y="5" width="14" height="14" rx="2"/>
+{% elif name == 'globe' %}<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/>
+{% else %}<circle cx="12" cy="12" r="9"/><path d="M12 8v5m0 3h.01"/>{% endif %}
+</svg>
+{%- endmacro %}
+
+{% macro brand() -%}<span class="brand-mark">{{ icon('shield') }}</span><span class="brand-name">DS <b>IPS</b><small>SECURITY OPERATIONS</small></span>{%- endmacro %}
+
+{% macro panel_head(title, subtitle='') -%}<div class="panel-heading"><h2>{{ title }}</h2>{% if subtitle %}<p>{{ subtitle }}</p>{% endif %}</div>{%- endmacro %}

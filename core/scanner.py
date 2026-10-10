@@ -9,8 +9,6 @@ import socket
 import ipaddress
 import subprocess
 import threading
-import time
-import ipaddress
 from scapy.all import srp, ARP, Ether
 import logging
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
@@ -21,20 +19,27 @@ class NetworkScanner:
     """
     Scapy kullanarak ağdaki IP ve MAC adreslerini keşfeden tarayıcı sınıfı.
     """
-    def __init__(self, db, interface='eth0'):
+    def __init__(self, db, interface='eth0', target=None):
+        self.target = str(ipaddress.IPv4Network(target, strict=False)) if target else None
         self.db = db
         self.interface = interface
         self.running = False
         self.scan_thread = None
+        self._stop_event = threading.Event()
 
     def get_subnet(self):
         """Arayüzün bağlı olduğu alt ağı (CIDR) bulur."""
+        if self.target:
+            return str(ipaddress.IPv4Network(self.target, strict=False))
         try:
-            # ip -o -f inet addr show dev wlan0 | awk '{print $4}'
-            cmd = f"ip -o -f inet addr show dev {self.interface} | awk '{{print $4}}'"
-            out = subprocess.getoutput(cmd).strip()
-            if out and "does not exist" not in out:
-                return str(ipaddress.IPv4Network(out, strict=False))
+            result = subprocess.run(
+                ['ip', '-o', '-f', 'inet', 'addr', 'show', 'dev', self.interface],
+                capture_output=True, text=True, check=True, timeout=5,
+            )
+            for line in result.stdout.splitlines():
+                fields = line.split()
+                if 'inet' in fields:
+                    return str(ipaddress.IPv4Network(fields[fields.index('inet') + 1], strict=False))
         except Exception as e:
             print(f"{Fore.RED}[!] Subnet bulunamadı: {e}{Style.RESET_ALL}")
         return None
@@ -67,7 +72,7 @@ class NetworkScanner:
                 hostname = "Bilinmiyor"
                 try:
                     hostname = socket.gethostbyaddr(ip)[0]
-                except socket.herror:
+                except OSError:
                     pass
                     
                 # TTL ve OS tespiti (ICMP ile ping atıp dönen paketin TTL'sine bakarak)
@@ -101,15 +106,14 @@ class NetworkScanner:
         """Arka planda periyodik tarama yapan döngü."""
         while self.running:
             self.scan_once()
-            # Kesilebilir uyku
-            for _ in range(interval):
-                if not self.running:
-                    break
-                time.sleep(1)
+            self._stop_event.wait(interval)
 
     def start_periodic(self, interval=60):
         """Periyodik taramayı başlatır."""
-        if not self.running:
+        if interval <= 0:
+            raise ValueError("Tarama aralığı pozitif olmalıdır")
+        if not self.running and not (self.scan_thread and self.scan_thread.is_alive()):
+            self._stop_event.clear()
             self.running = True
             self.scan_thread = threading.Thread(target=self._scan_loop, args=(interval,), daemon=True)
             self.scan_thread.start()
@@ -118,6 +122,7 @@ class NetworkScanner:
     def stop(self):
         """Periyodik taramayı durdurur."""
         self.running = False
-        if self.scan_thread:
+        self._stop_event.set()
+        if self.scan_thread and self.scan_thread is not threading.current_thread():
             self.scan_thread.join(timeout=2)
             print(f"{Fore.YELLOW}[*] Periyodik ağ tarayıcı durduruldu.{Style.RESET_ALL}")

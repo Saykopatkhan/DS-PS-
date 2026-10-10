@@ -5,6 +5,7 @@
 
 import json
 import os
+import threading
 from datetime import datetime
 
 class SIEMExporter:
@@ -15,7 +16,7 @@ class SIEMExporter:
     def __init__(self, log_file='data/siem_logs.json'):
         self.log_file = log_file
         # Ensure data directory exists
-        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
+        self._lock = threading.Lock()
 
     def export_alert(self, alert_data):
         """
@@ -31,19 +32,21 @@ class SIEMExporter:
                 "action": "logged"
             },
             "source": {
-                "ip": alert_data.get('source_ip', ''),
-                "mac": alert_data.get('source_mac', '')
+                "ip": alert_data.get('source_ip', alert_data.get('src_ip', '')),
+                "mac": alert_data.get('source_mac', alert_data.get('src_mac', ''))
             },
             "destination": {
-                "ip": alert_data.get('destination_ip', ''),
-                "mac": alert_data.get('destination_mac', '')
+                "ip": alert_data.get('destination_ip', alert_data.get('dst_ip', '')),
+                "mac": alert_data.get('destination_mac', alert_data.get('dst_mac', ''))
             },
             "message": alert_data.get('description', '')
         }
 
         try:
-            with open(self.log_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(siem_event) + "\n")
+            with self._lock:
+                os.makedirs(os.path.dirname(os.path.abspath(self.log_file)), exist_ok=True)
+                with open(self.log_file, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps(siem_event) + "\n")
         except Exception as e:
             print(f"SIEM Export Error: {e}")
 

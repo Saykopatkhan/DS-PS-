@@ -12,7 +12,6 @@ Saldırganlar bu açık portlara bağlandığı anda deşifre olup TUZAKLANDI ro
 
 import socket
 import threading
-import time
 import logging
 from core.database import Database
 from utils.sound import SoundAlert
@@ -20,18 +19,22 @@ from utils.sound import SoundAlert
 logger = logging.getLogger("DSIPS_Honeypot")
 
 class Honeypot:
-    def __init__(self, db: Database, blocker=None, auto_ban=True, socketio=None, tarpit=None):
+    def __init__(self, db: Database, blocker=None, auto_ban=True, socketio=None, tarpit=None, web_port=8081):
         self.db = db
         self.blocker = blocker
         self.auto_ban = auto_ban
         self.socketio = socketio
         self.tarpit = tarpit
-        self.ports = [21, 23, 445, 2222] # FTP, Telnet, SMB, SSH Tuzakları
+        self.web_port = web_port
+        self._web_server = None
+        self.ports = [21, 23, 445] # FTP, Telnet, SMB, SSH Tuzakları
         self.threads = []
         self.running = False
         self.sockets = []
 
     def start(self):
+        if self.running:
+            return
         self.running = True
         for port in self.ports:
             t = threading.Thread(target=self._listen_port, args=(port,), daemon=True)
@@ -40,12 +43,13 @@ class Honeypot:
             
         # Gelişmiş Web Bal Küpü (Port 8080)
         self._start_fake_web_server()
-        logger.info("[+] Honeypot & Deception servisleri aktif (Portlar: 21, 23, 445, 2222, 8080).")
+        logger.info("[+] Honeypot & Deception servisleri aktif (Portlar: 21, 23, 445, 2222, 8081).")
 
     def _start_fake_web_server(self):
         from flask import Flask, request
         
         self.fake_web = Flask('honeypot_web')
+        self.fake_web.config['MAX_CONTENT_LENGTH'] = 65536
         log = logging.getLogger('werkzeug')
         log.disabled = True
         
@@ -57,7 +61,7 @@ class Honeypot:
             
             payload = ""
             if method == 'POST':
-                payload = request.get_data(as_text=True)
+                payload = str({key: ('[REDACTED]' if any(word in key.lower() for word in ('pass', 'secret', 'token')) else value) for key, value in request.form.items()}) if request.form else '[request body omitted]'
             elif request.args:
                 payload = str(dict(request.args))
                 
@@ -65,7 +69,7 @@ class Honeypot:
             if payload:
                 msg += f" | Payload: {payload}"
                 
-            self._trigger_alert(ip, 8080, custom_msg=msg)
+            self._trigger_alert(ip, self.web_port, custom_msg=msg)
                 
             return '''
             <!DOCTYPE html>
@@ -94,56 +98,39 @@ class Honeypot:
             </html>
             '''
             
-        t = threading.Thread(
-            target=lambda: self.fake_web.run(host='0.0.0.0', port=8081, debug=False, use_reloader=False), 
-            daemon=True
-        )
-        self.threads.append(t)
-        t.start()
+        from werkzeug.serving import make_server
+        try:
+            self._web_server = make_server('0.0.0.0', self.web_port, self.fake_web)
+        except (OSError, SystemExit) as exc:
+            logger.warning('Web honeypot could not start: %s', exc)
+            return
+        thread = threading.Thread(target=self._web_server.serve_forever, daemon=True)
+        self.threads.append(thread)
+        thread.start()
 
     def _listen_port(self, port):
         try:
-            server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server.bind(('0.0.0.0', port))
-            server.listen(5)
-            self.sockets.append(server)
-            
-            while self.running:
-                try:
-                    server.settimeout(1.0)
-                    conn, addr = server.accept()
-                    attacker_ip = addr[0]
-                    
-                    self._trigger_alert(attacker_ip, port)
-                    
-                    # Sahte banner göndererek oyalama
-                    if port == 21:
-                        try:
-                            import os
-                            banner_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'honeypot', 'ftp_banner.txt')
-                            with open(banner_path, 'r') as f:
-                                conn.send(f.read().encode() + b"\\r\\n")
-                        except Exception:
-                            conn.send(b"220 (vsFTPd 3.0.3 - Secure FTP)\\r\\n")
-                    elif port == 23:
-                        conn.send(b"Ubuntu 22.04 LTS\\r\\nlogin: ")
-                    elif port == 2222:
-                        try:
-                            import os
-                            banner_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'honeypot', 'ssh_banner.txt')
-                            with open(banner_path, 'r') as f:
-                                conn.send(f.read().encode() + b"\\r\\n")
-                        except Exception:
-                            conn.send(b"SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1\\r\\n")
-                        
-                    conn.close()
-                except socket.timeout:
-                    continue
-                except Exception:
-                    break
-        except Exception as e:
-            logger.debug(f"Honeypot port {port} açılamadı: {e}")
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+                server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                server.bind(('0.0.0.0', port))
+                server.listen(5)
+                server.settimeout(0.5)
+                self.sockets.append(server)
+                while self.running:
+                    try:
+                        conn, addr = server.accept()
+                    except socket.timeout:
+                        continue
+                    with conn:
+                        conn.settimeout(2)
+                        self._trigger_alert(addr[0], port)
+                        if port == 21:
+                            conn.sendall(b'220 (vsFTPd 3.0.3 - Secure FTP)\r\n')
+                        elif port == 23:
+                            conn.sendall(b'Ubuntu 22.04 LTS\r\nlogin: ')
+        except OSError as exc:
+            if self.running:
+                logger.debug('Honeypot port %s unavailable: %s', port, exc)
 
     def _trigger_alert(self, ip, port, custom_msg=None):
         service = "FTP" if port == 21 else "Telnet" if port == 23 else "SMB" if port == 445 else "SSH" if port == 2222 else f"Port {port}"
@@ -154,30 +141,15 @@ class Honeypot:
             src_ip=ip, src_mac='N/A',
             dst_ip='N/A', dst_mac='N/A',
             description=desc,
-            severity='critical'
+            severity='high', source_verified=True,
         )
         
-        # SocketIO üzerinden CANLI TUZAKLANDI bildirimi yolla
-        if self.socketio:
-            try:
-                self.socketio.emit('new_alert', {
-                    'id': int(time.time()),
-                    'ip': ip,
-                    'type': f'🕸️ HONEYPOT TUZAĞI ({service})',
-                    'description': desc,
-                    'severity': 'critical',
-                    'tarpitted': True,
-                    'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
-                }, namespace='/')
-            except Exception:
-                pass
-
         SoundAlert.alert_attack(f"{service} Honeypot İhlali")
         
         # Otomatik Ban ve Tarpit
         if self.blocker and self.auto_ban:
             self.blocker.block_ip(ip, reason=f"Honeypot Tuzağına Düştü ({service})")
-        if self.tarpit:
+        if self.tarpit and self.auto_ban:
             self.tarpit.tarpit_ip(ip)
 
     def stop(self):
@@ -187,3 +159,12 @@ class Honeypot:
                 s.close()
             except Exception:
                 pass
+        self.sockets.clear()
+        if self._web_server:
+            self._web_server.shutdown()
+            self._web_server.server_close()
+            self._web_server = None
+        for thread in self.threads:
+            if thread is not threading.current_thread():
+                thread.join(timeout=2)
+        self.threads.clear()

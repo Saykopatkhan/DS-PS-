@@ -1,116 +1,68 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-# ========================================================================
-# DS-IPS Nginx Reverse Proxy Setup Script
-# ========================================================================
-
-if [ "$EUID" -ne 0 ]; then
-    echo "[!] ERROR: Root privileges are required to configure Nginx."
-    echo "[*] Please run with sudo: sudo ./setup_nginx.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$EUID" -ne 0 ]]; then
+    echo "[!] Nginx yapılandırması için root yetkisi gerekir." >&2
     exit 1
 fi
-
 if ! command -v nginx >/dev/null 2>&1; then
-    echo "[+] Installing Nginx..."
-    apt-get update -y
-    apt-get install -y nginx
+    echo "[!] Önce dağıtımınızın paket yöneticisiyle nginx kurun." >&2
+    exit 1
 fi
-
-CONFIG_AVAILABLE="/etc/nginx/sites-available/ds_ips_dashboard"
-CONFIG_ENABLED="/etc/nginx/sites-enabled/ds_ips_dashboard"
-
-echo "[+] Writing Nginx configuration to $CONFIG_AVAILABLE..."
-
-cat <<'EOF' > "$CONFIG_AVAILABLE"
-# ========================================================================
-# DS-IPS Dashboard Reverse Proxy & Security Configuration
-# ========================================================================
-
-# 1. Rate Limiting: 5 requests per second per IP (Brute Force Protection)
-limit_req_zone $binary_remote_addr zone=ds_ips_req_limit:10m rate=5r/s;
-
-# 2. Connection Limiting: Max connections per IP (Slowloris Protection)
-limit_conn_zone $binary_remote_addr zone=ds_ips_conn_limit:10m;
-
-# 3. Map for WebSocket connection headers
-map $http_upgrade $connection_upgrade {
-    default upgrade;
-    '' close;
-}
-
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    server_name _;
-
-    # Client Request & Timeout Hardening (Slowloris Mitigation)
-    client_body_timeout 10s;
-    client_header_timeout 10s;
-    keepalive_timeout 15s;
-    send_timeout 10s;
-    client_max_body_size 50M;
-
-    # Apply Connection Limit (Max 10 concurrent connections per IP)
-    limit_conn ds_ips_conn_limit 10;
-
-    # Root location
-    location / {
-        # Apply Rate Limit: 5 req/s with burst of 10
-        limit_req zone=ds_ips_req_limit burst=10 nodelay;
-
-        proxy_pass http://127.0.0.1:5000;
-        proxy_http_version 1.1;
-
-        # WebSocket & Header Forwarding
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-
-    # Dedicated WebSocket endpoint for Socket.IO
-    location /socket.io/ {
-        proxy_pass http://127.0.0.1:5000/socket.io/;
-        proxy_http_version 1.1;
-        proxy_buffering off;
-
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 86400s;
-        proxy_read_timeout 86400s;
-    }
-}
-EOF
-
-# Disable default nginx site if present
-if [ -f /etc/nginx/sites-enabled/default ]; then
-    echo "[*] Disabling default Nginx site..."
-    rm -f /etc/nginx/sites-enabled/default
+: "${DSIPS_SERVER_NAME:?Panelin alan adını DSIPS_SERVER_NAME ile belirtin}"
+: "${DSIPS_TLS_CERT:?TLS sertifikasını DSIPS_TLS_CERT ile belirtin}"
+: "${DSIPS_TLS_KEY:?TLS anahtarını DSIPS_TLS_KEY ile belirtin}"
+if [[ ! "$DSIPS_SERVER_NAME" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]]; then
+    echo "[!] Geçersiz alan adı." >&2
+    exit 1
 fi
+for cert_path in "$DSIPS_TLS_CERT" "$DSIPS_TLS_KEY"; do
+    if [[ ! "$cert_path" =~ ^/[a-zA-Z0-9_./-]+$ || ! -f "$cert_path" ]]; then
+        echo "[!] Sertifika yolları mevcut, mutlak ve boşluksuz olmalıdır." >&2
+        exit 1
+    fi
+done
 
-# Enable ds_ips_dashboard
-echo "[+] Enabling ds_ips_dashboard site..."
-ln -sf "$CONFIG_AVAILABLE" "$CONFIG_ENABLED"
-
-# Test configuration syntax
-echo "[+] Testing Nginx configuration syntax..."
+CONFIG_PATH=/etc/nginx/conf.d/ds_ips_dashboard.conf
+if [[ -e /etc/nginx/sites-enabled/ds_ips_dashboard ]]; then
+    echo "[!] Eski sites-enabled/ds_ips_dashboard yapılandırmasını önce taşıyın; mevcut dosya korunuyor." >&2
+    exit 1
+fi
+mkdir -p /etc/nginx/conf.d
+STAGING_DIR="$(mktemp -d)"
+HAD_CONFIG=false
+INSTALLED=false
+if [[ -e "$CONFIG_PATH" ]]; then
+    cp -p "$CONFIG_PATH" "$STAGING_DIR/previous.conf"
+    HAD_CONFIG=true
+fi
+cleanup() {
+    if [[ "$INSTALLED" == true ]]; then
+        if [[ "$HAD_CONFIG" == true ]]; then
+            cp -p "$STAGING_DIR/previous.conf" "$CONFIG_PATH"
+        else
+            rm -f "$CONFIG_PATH"
+        fi
+    fi
+    rm -rf "$STAGING_DIR"
+}
+trap cleanup EXIT
+export DSIPS_SERVER_NAME DSIPS_TLS_CERT DSIPS_TLS_KEY
+python3 - "$SCRIPT_DIR/config/nginx.conf.example" "$STAGING_DIR/dashboard.conf" <<'PY'
+import os
+import sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+for placeholder, variable in (("__SERVER_NAME__", "DSIPS_SERVER_NAME"),
+                              ("__TLS_CERT__", "DSIPS_TLS_CERT"),
+                              ("__TLS_KEY__", "DSIPS_TLS_KEY")):
+    text = text.replace(placeholder, os.environ[variable])
+Path(sys.argv[2]).write_text(text)
+PY
+INSTALLED=true
+install -m 644 "$STAGING_DIR/dashboard.conf" "$CONFIG_PATH"
 nginx -t
-
-# Restart Nginx service (WSL/Container uyumluluğu için service kullanıyoruz)
-echo "[+] Restarting Nginx service..."
-service nginx restart || /etc/init.d/nginx restart
-
-echo "[✔] Nginx reverse proxy configured and active on port 80!"
+nginx -s reload
+INSTALLED=false
+echo "[+] HTTPS proxy hazır. .env: DS_IPS_TRUST_PROXY=true ve DS_IPS_COOKIE_SECURE=true"

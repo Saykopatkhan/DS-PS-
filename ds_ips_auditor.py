@@ -5,14 +5,12 @@
 import argparse
 import socket
 import time
-import threading
 import sys
 import requests
-import urllib3
 from colorama import init, Fore, Style
 
 try:
-    from scapy.all import IP, TCP, UDP, ARP, Ether, send, sendp, srp, sniff, conf
+    from scapy.all import IP, TCP, ARP, Ether, send, sendp, conf
 except ImportError:
     print("Scapy eksik. Yüklemek için: pip install scapy")
     sys.exit(1)
@@ -24,7 +22,6 @@ except ImportError:
     print("dnspython eksik. Yüklemek için: pip install dnspython")
     sys.exit(1)
 
-urllib3.disable_warnings()
 init(autoreset=True)
 
 class DSIpsAuditor:
@@ -66,7 +63,7 @@ class DSIpsAuditor:
 
     def run_tests(self):
         print(f"\n{Fore.CYAN}{'='*60}")
-        print(f"DS-IPS (Premium SOC) v5.0 - BAS Otonom Denetim Başlıyor")
+        print("DS-IPS (Premium SOC) v5.0 - BAS Otonom Denetim Başlıyor")
         print(f"Hedef: {self.target} | Arayüz: {self.interface} | Gecikme: {self.delay}s")
         print(f"{'='*60}{Style.RESET_ALL}\n")
 
@@ -93,52 +90,16 @@ class DSIpsAuditor:
         self.print_final_report()
 
     def test_waf_and_self_defense(self):
-        self.log("Modül 1: WAF & Self-Defense testi başlatılıyor...")
-        module = "1. WAF & Self-Defense"
+        from ds_ips_qa_suite import probe_login_rate_limit
         start_time = time.time()
-        
-        # SQLi Testi
         try:
-            headers = {"User-Agent": "' UNION SELECT 1,2,3--"}
-            r = requests.get(f"{self.base_url}/?id=1' OR '1'='1", headers=headers, timeout=3)
-            self.log(f"SQLi Payload gönderildi. Yanıt: {r.status_code}")
-        except Exception as e:
-            self.log(f"SQLi WAF tarafından engellendi: {e}", "SUCCESS")
-
-        # XSS Testi
-        try:
-            r = requests.post(f"{self.base_url}/login", data={"username": "<script>alert(1)</script>"}, timeout=3)
-            self.log(f"XSS Payload gönderildi. Yanıt: {r.status_code}")
-        except Exception:
-            self.log("XSS WAF tarafından engellendi.", "SUCCESS")
-
-        # Brute Force Eşiği
-        banned = False
-        for i in range(6):
-            try:
-                r = requests.post(f"{self.base_url}/login", data={"username": "admin", "password": f"bad{i}"}, timeout=2)
-                self.log(f"Brute-force denemesi {i+1}/6")
-                if "WAF Koruması" in r.text or r.status_code == 403:
-                    self.log("WAF seviyesinde HTTP 403 / Hata Şablonu ile erişim reddedildi! (IP Beyaz listedeyse Connection Refused dönmez)", "SUCCESS")
-                    banned = True
-                    break
-            except requests.exceptions.ConnectionError:
-                self.log("IP adresi seviyesinde Connection Refused (Ban) alındı!", "SUCCESS")
-                banned = True
-                break
-            except requests.exceptions.Timeout:
-                self.log("Bağlantı zaman aşımına uğradı (DROP)", "SUCCESS")
-                banned = True
-                break
-        
-        latency = f"{(time.time() - start_time)*1000:.1f}ms"
-        if banned:
-            if self.is_whitelisted:
-                self.report_result(module, "ECONNRESET / 403 / DROP", "WAF Koruması (Beyaz Liste Yüzünden DROP Yok)", "PASSED - PROTECTED BY WHITELIST", latency)
-            else:
-                self.report_result(module, "ECONNRESET / 403 / DROP", "Firewall veya WAF Engelledi", "PASSED", latency)
-        else:
-            self.report_result(module, "ECONNRESET / 403 / DROP", "HTTP yanıtı dönmeye devam etti", "FAILED", latency)
+            limited = probe_login_rate_limit(self.base_url)
+            self.report_result("1. Login Rate Limit", "HTTP 429",
+                               "HTTP 429 observed" if limited else "No rate limit observed",
+                               "PASSED" if limited else "FAILED",
+                               f"{(time.time() - start_time) * 1000:.1f}ms")
+        except (requests.RequestException, ValueError) as exc:
+            self.report_result("1. Login Rate Limit", "HTTP 429", str(exc), "INCONCLUSIVE", "N/A")
 
     def test_honeypot(self):
         self.log("\nModül 2: Honeypot & Deception testi başlatılıyor...")
@@ -188,18 +149,18 @@ class DSIpsAuditor:
             data = s.recv(10)
             elapsed = time.time() - start_time
             
-            if elapsed >= 2.0:
+            if data and elapsed >= 2.0:
                 self.log(f"Aşırı yavaş veri akışı tespit edildi ({elapsed:.2f} saniye). Tarpit aktif!", "SUCCESS")
                 self.report_result(module, "Zero-Window / Aşırı Gecikme", f"Gecikme: {elapsed:.2f}s", "PASSED", f"{elapsed*1000:.1f}ms")
             elif self.is_whitelisted:
                 self.log(f"Test hedeflenen IP ({self.target}) beyaz listede olduğu için Tarpit tetiklenmedi (Hızlı koptu).", "SUCCESS")
-                self.report_result(module, "Zero-Window / Aşırı Gecikme", "Bağlantı Reddildi (Beyaz Liste Koruması)", "PASSED - PROTECTED BY WHITELIST", f"{elapsed*1000:.1f}ms")
+                self.report_result(module, "Zero-Window / Aşırı Gecikme", "Bağlantı Reddildi (Beyaz Liste Koruması)", "INCONCLUSIVE", f"{elapsed*1000:.1f}ms")
             else:
                 self.report_result(module, "Zero-Window / Aşırı Gecikme", "Bağlantı anında koptu veya çok hızlı", "FAILED", f"{elapsed*1000:.1f}ms")
             s.close()
         except socket.timeout:
             self.log("Soket zaman aşımına uğradı (Tam Tarpit - Zero Window)", "SUCCESS")
-            self.report_result(module, "Zero-Window / Aşırı Gecikme", "Soket Donduruldu (Timeout)", "PASSED", "5000+ms")
+            self.report_result(module, "Zero-Window / Aşırı Gecikme", "Timeout; Tarpit doğrulanamadı", "INCONCLUSIVE", "5000+ms")
         except Exception as e:
             self.report_result(module, "Zero-Window / Aşırı Gecikme", f"Hata: {e}", "FAILED", "0ms")
 
@@ -228,7 +189,7 @@ class DSIpsAuditor:
                     pass
                 
                 latency = f"{(time.time() - start_time)*1000:.1f}ms"
-                self.report_result(module, "Sinkhole IP + Karantina HTML", "Sadece DNS Yanıtı Alındı (HTTP Hatalı)", "PASSED", latency)
+                self.report_result(module, "Sinkhole IP + Karantina HTML", "Sadece DNS Yanıtı Alındı (HTTP Hatalı)", "INCONCLUSIVE", latency)
             else:
                 self.report_result(module, "Sinkhole IP + Karantina HTML", "Boş DNS Yanıtı", "FAILED", "0ms")
         except Exception as e:
@@ -255,7 +216,7 @@ class DSIpsAuditor:
             send(pkt_null, verbose=False)
             
             latency = f"{(time.time() - start_time)*1000:.1f}ms"
-            self.report_result(module, "Tarama Alarmı Tetiklenmesi", "Paketler Enjekte Edildi", "PASSED", latency)
+            self.report_result(module, "Tarama Alarmı Tetiklenmesi", "Paketler Enjekte Edildi; alarm doğrulanmadı", "SENT", latency)
         except Exception as e:
             self.report_result(module, "Tarama Alarmı Tetiklenmesi", f"Enjeksiyon Hatası: {e}", "FAILED", "0ms")
 
@@ -273,7 +234,7 @@ class DSIpsAuditor:
             # Not: Tam iyileştirme paketini yakalamak için asenkron dinleme gerekir (sniff).
             # Bu otomasyonda sadece pakedin basılabildiğini teyit edip PASSED dönüyoruz.
             latency = f"{(time.time() - start_time)*1000:.1f}ms"
-            self.report_result(module, "ARP İyileştirme Paketleri (Healing)", "Sahte ARP Yayınlandı (Sniffer Bekleniyor)", "PASSED", latency)
+            self.report_result(module, "ARP İyileştirme Paketleri (Healing)", "Sahte ARP Yayınlandı; iyileştirme doğrulanmadı", "SENT", latency)
         except Exception as e:
             self.report_result(module, "ARP İyileştirme Paketleri (Healing)", f"L2 Enjeksiyon Hatası: {e}", "FAILED", "0ms")
 

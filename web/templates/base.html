@@ -1,0 +1,56 @@
+{% from 'components.html' import icon, brand %}
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <meta name="theme-color" content="#0b101b">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' ws: wss:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <title>{% block title %}Güvenlik Merkezi{% endblock %} · DS IPS</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/lenis.css') }}">
+  {% block head %}{% endblock %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='security.js') }}"></script>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+<a href="#main-content" class="skip-link">İçeriğe geç</a>
+{% block body %}
+<button class="nav-backdrop" aria-label="Menüyü kapat" tabindex="-1" data-close-nav></button>
+<aside class="app-nav" id="app-nav" aria-label="Ana menü" data-lenis-prevent>
+  <a class="brand" href="/" aria-label="DS IPS ana sayfa">{{ brand() }}</a>
+  <div class="workspace-chip"><span class="workspace-avatar">DS</span><span>Güvenlik çalışma alanı<small>Ağ yönetimi</small></span><span class="workspace-dot"></span></div>
+  <p class="nav-label">ÇALIŞMA ALANI</p>
+  <nav class="nav-links">
+    <a href="/#overview" data-section="overview" class="nav-link {% if request.path == '/' %}active{% endif %}">{{ icon('grid') }}<span>Genel bakış</span></a>
+    <a href="/#alerts" data-section="alerts" class="nav-link">{{ icon('bell') }}<span>Güvenlik olayları</span><span class="nav-dot"></span></a>
+    <a href="/#network" data-section="network" class="nav-link">{{ icon('network') }}<span>Ağ görünürlüğü</span></a>
+    <a href="/#modules" data-section="modules" class="nav-link">{{ icon('cpu') }}<span>Tespit modülleri</span></a>
+    <a href="/#defense" data-section="defense" class="nav-link">{{ icon('shield') }}<span>Savunma yönetimi</span></a>
+    <a href="/soc_premium" class="nav-link {% if request.path == '/soc_premium' %}active{% endif %}">{{ icon('chart') }}<span>Gelişmiş analiz</span><span class="nav-tag">SOC</span></a>
+  </nav>
+  <div class="nav-bottom">
+    <div class="nav-note">{{ icon('lock') }}<p>Tek merkezden görünürlük.<small>Tespit, analiz ve müdahale.</small></p></div>
+    {% if request.path == '/' %}<button class="nav-link" onclick="openSettings()">{{ icon('settings') }}<span>Bildirim ayarları</span></button>{% endif %}
+    <button class="nav-link" onclick="logout()">{{ icon('logout') }}<span>Oturumu kapat</span></button>
+    <div class="operator"><span class="operator-avatar">OP</span><span>Güvenlik operatörü<small>Yönetim oturumu</small></span>{{ icon('lock') }}</div>
+  </div>
+</aside>
+<div class="app-workspace">
+  <header class="topbar">
+    <div class="breadcrumb"><button class="icon-button mobile-menu" data-toggle-nav aria-controls="app-nav" aria-expanded="false" aria-label="Menüyü aç">{{ icon('menu') }}</button><span>Çalışma alanı</span><span class="breadcrumb-divider">/</span><strong>{% block breadcrumb %}Genel bakış{% endblock %}</strong></div>
+    <div class="topbar-actions"><span class="topbar-date" id="current-date"></span><span class="topbar-divider"></span><span class="session-label">{{ icon('lock') }} Yetkili oturum</span><span class="operator-avatar small">OP</span></div>
+  </header>
+  <main class="dashboard" id="main-content" tabindex="-1">{% block content %}{% endblock %}</main>
+  <footer class="footer"><span>DS IPS <span class="footer-separator">/</span> Ağ güvenliği operasyon merkezi</span><span>Tespit · Analiz · Müdahale</span></footer>
+</div>
+{% block modals %}{% endblock %}
+{% endblock %}
+<div class="toast-region" id="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>
+<script src="{{ url_for('static', filename='vendor/lenis.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/anime.umd.min.js') }}"></script>
+<script src="{{ url_for('static', filename='ui.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

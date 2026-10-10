@@ -1,167 +1,87 @@
-# ========================================================================
-# DS-IPS (Premium SOC Edition)
-# Bu proje Kadir Kırmacı'ya aittir. 
-# Copyright (c) 2026 Kadir Kırmacı. All Rights Reserved.
-# Ticari kullanımı ve tersine mühendislik yapılması kesinlikle yasaktır.
-# ========================================================================
-
 #!/usr/bin/env python3
-"""
-DS IPS Web Panel - Ana çalıştırma dosyası.
-Flask + SocketIO tabanlı gerçek zamanlı dashboard.
-"""
+"""DS-IPS development dashboard entrypoint; production uses start_prod.sh."""
+
 import argparse
+import ipaddress
 import os
-import sys
-import threading
-from colorama import init, Fore, Style
+import signal
+from pathlib import Path
 
-# Otomatik Aktif Arayüz Tespiti (Örn: wlan0, eth0)
-# 'any' seçilerek hem localhost (lo) hem de dış ağ kartlarının aynı anda dinlenmesi sağlanır.
-default_iface = 'any'
+from dotenv import load_dotenv
 
-init(autoreset=True)
+from services import RuntimeServices, env_bool
 
 
-def print_banner():
-    """Uygulama başlangıç banner'ını yazdırır."""
-    banner = f"""
-{Fore.CYAN}╔══════════════════════════════════════════════════════════╗
-║  {Fore.GREEN}DS IPS - Ağ Saldırı Tespit & Önleme Web Paneli{Fore.CYAN}         ║
-║  {Fore.GREEN}Intrusion Prevention System v1.0 - Dashboard{Fore.CYAN}           ║
-╚══════════════════════════════════════════════════════════╝{Style.RESET_ALL}
-"""
-    print(banner)
+def port_number(value):
+    number = int(value)
+    if not 1 <= number <= 65535:
+        raise argparse.ArgumentTypeError("Port 1–65535 arasında olmalıdır")
+    return number
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='DS IPS Web Panel - Gerçek Zamanlı Dashboard')
-    parser.add_argument('-i', '--interface', default=default_iface,
-                        help=f'Ağ arayüzü (Varsayılan: {default_iface})')
-    parser.add_argument('-m', '--mode', choices=['ids', 'ips'], default='ips',
-                        help='Çalışma modu (ids: sadece tespit, ips: tespit + önleme)')
-    parser.add_argument('--wifi', action='store_true',
-                        help='WiFi saldırı tespiti (monitor mode gerektirir)')
-    parser.add_argument('--db', default='ds_ips.db',
-                        help='Veritabanı dosya yolu')
-    parser.add_argument('--unban-time', type=int, default=3600,
-                        help='Otomatik ban kaldırma süresi (saniye)')
-    parser.add_argument('-p', '--port', type=int, default=5000,
-                        help='Web panel portu')
-    parser.add_argument('--host', default='0.0.0.0',
-                        help='Web panel host adresi')
-    parser.add_argument('--debug', action='store_true',
-                        help='Debug modu')
-    parser.add_argument('--dry-run', action='store_true',
-                        help='Dry Run: Tespit yap ama engelleme yapma (test modu)')
-    parser.add_argument('--reset-db', action='store_true',
-                        help='Başlangıçta veritabanını (eski cihaz/alarm kayıtları) sıfırla')
+def positive_seconds(value):
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("Süre sıfırdan büyük olmalıdır")
+    return number
 
-    args = parser.parse_args()
 
-    print_banner()
+def build_parser():
+    parser = argparse.ArgumentParser(description="DS-IPS geliştirme web paneli")
+    parser.add_argument("-i", "--interface", default=os.getenv("DS_IPS_INTERFACE", "any"))
+    parser.add_argument("-m", "--mode", choices=["ids", "ips"], default=os.getenv("DS_IPS_MODE", "ids"))
+    parser.add_argument("--wifi", action="store_true", default=env_bool("DS_IPS_WIFI"))
+    parser.add_argument("--db", default=os.getenv("DS_IPS_DB", "ds_ips.db"))
+    parser.add_argument("--target", type=lambda value: str(ipaddress.IPv4Network(value, strict=False)),
+                        help="Elle/periyodik ARP taramasının IPv4 alt ağı")
+    parser.add_argument("--unban-time", type=positive_seconds, default=os.getenv("DS_IPS_UNBAN_TIME", "3600"))
+    parser.add_argument("-p", "--port", type=port_number, default=5000)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--autostart", action="store_true", help="Panel açılırken izleme ve seçili modun servislerini başlat")
+    parser.add_argument("--dry-run", action="store_true", default=env_bool("DS_IPS_DRY_RUN"))
+    parser.add_argument("--reset-db", action="store_true", help="Cihaz ve alarm geçmişini temizle")
+    parser.add_argument("--no-hids", action="store_true", default=not env_bool("DS_IPS_HIDS", True))
+    return parser
 
-    if args.mode == 'ips' and os.geteuid() != 0:
-        print(f"{Fore.RED}[!] UYARI: IPS modu için root yetkisi gerekiyor!{Style.RESET_ALL}")
-        print(f"{Fore.RED}[!] Lütfen 'sudo' ile çalıştırın.{Style.RESET_ALL}")
+
+def main(argv=None):
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.mode not in {"ids", "ips"}:
+        parser.error("DS_IPS_MODE ids veya ips olmalıdır")
+    if args.mode == "ips" and not args.dry_run and os.geteuid() != 0:
+        parser.error("IPS modu için root yetkisi gerekir; test için --dry-run kullanın")
 
     from web.app import IPSWebApp
 
-    webapp = IPSWebApp(
-        interface=args.interface,
-        mode=args.mode,
-        wifi_enabled=args.wifi,
-        db_path=args.db,
-        unban_time=args.unban_time,
-        dry_run=args.dry_run
-    )
-    
-    # Veritabanını sıfırla (--reset-db bayrağı verilmişse)
-    if args.reset_db:
-        webapp.db.reset_database()
-        print(f"{Fore.GREEN}[+] Veritabanı temizlendi (Cihaz geçmişi ve alarmlar sıfırlandı).{Style.RESET_ALL}")
+    webapp = IPSWebApp(interface=args.interface, mode=args.mode,
+                       wifi_enabled=args.wifi, db_path=args.db,
+                       unban_time=args.unban_time, dry_run=args.dry_run)
+    if args.target:
+        webapp.scanner.target = args.target
+    services = RuntimeServices(webapp, hids_enabled=not args.no_hids,
+                               telegram_enabled=env_bool("DS_IPS_TELEGRAM"))
 
-    # --- Yeni v5.0 Eklentileri (Arka Plan Thread'leri) ---
-    # HIDS/WAF Motoru (Log izleme - opsiyonel)
-    try:
-        from modules.hids_engine import HIDSEngine
-        import asyncio
-        hids = HIDSEngine()
-        # HIDS alarmlarını veritabanına ve Socket.IO'ya köprüle
-        def hids_alert_handler(event):
-            import time
-            try:
-                webapp.db.add_alert(
-                    alert_type=event.get('type', 'HIDS'),
-                    src_ip=event.get('source_ip', 'Bilinmiyor'),
-                    src_mac='N/A',
-                    dst_ip='N/A',
-                    dst_mac='N/A',
-                    description=event.get('details', ''),
-                    severity='Yüksek'
-                )
-                webapp.socketio.emit('new_alert', {
-                    'id': int(time.time()),
-                    'ip': event.get('source_ip'),
-                    'type': event.get('type'),
-                    'description': event.get('details'),
-                    'severity': 'Yüksek',
-                    'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
-                }, namespace='/')
-            except Exception:
-                pass
-        hids.register_callback(hids_alert_handler)
-        
-        def run_hids():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(hids.run())
-        
-        hids_thread = threading.Thread(target=run_hids, daemon=True)
-        hids_thread.start()
-        print(f"{Fore.GREEN}[+] HIDS/WAF Motoru arka planda başlatıldı (Log izleme aktif){Style.RESET_ALL}")
-    except Exception as e:
-        print(f"{Fore.YELLOW}[!] HIDS Motoru yüklenemedi (opsiyonel): {e}{Style.RESET_ALL}")
+    def terminate(_signum, _frame):
+        raise KeyboardInterrupt
 
-    # Telegram Bot (opsiyonel - .env yoksa atlanır)
+    previous_sigterm = signal.signal(signal.SIGTERM, terminate)
     try:
-        from dotenv import load_dotenv
-        load_dotenv()
-        bot_token = os.getenv('BOT_TOKEN')
-        chat_id = os.getenv('CHAT_ID')
-        if bot_token and chat_id:
-            from responder.telegram_bot import TelegramBot
-            from core.event_bus import EventBus
-            event_bus = EventBus()
-            telegram_bot = TelegramBot(bot_token, chat_id, event_bus, webapp.blocker)
-            
-            def run_telegram():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(telegram_bot.start_polling())
-            
-            telegram_thread = threading.Thread(target=run_telegram, daemon=True)
-            telegram_thread.start()
-            print(f"{Fore.GREEN}[+] Telegram Bot başlatıldı (Uzaktan yönetim aktif){Style.RESET_ALL}")
-        else:
-            print(f"{Fore.YELLOW}[*] Telegram Bot: .env dosyasında BOT_TOKEN/CHAT_ID bulunamadı (opsiyonel){Style.RESET_ALL}")
-    except ImportError:
-        print(f"{Fore.YELLOW}[*] Telegram Bot: python-telegram-bot kütüphanesi kurulu değil (opsiyonel){Style.RESET_ALL}")
-    except Exception as e:
-        print(f"{Fore.YELLOW}[!] Telegram Bot yüklenemedi: {e}{Style.RESET_ALL}")
-    # --- Yeni v5.0 Eklentileri Sonu ---
-
-    try:
+        if args.reset_db:
+            webapp.db.reset_database()
+        services.start()
+        if args.autostart:
+            webapp._start_monitoring()
         webapp.run(host=args.host, port=args.port, debug=args.debug)
     except KeyboardInterrupt:
-        print(f"\n{Fore.YELLOW}[*] Kapatılıyor...{Style.RESET_ALL}")
-        if webapp.sniffer_running:
-            webapp.sniffer.stop()
-        webapp.db.close()
-        print(f"{Fore.GREEN}[✓] Görüşmek üzere!{Style.RESET_ALL}")
-        sys.exit(0)
+        pass
+    finally:
+        services.stop()
+        webapp.close()
+        signal.signal(signal.SIGTERM, previous_sigterm)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

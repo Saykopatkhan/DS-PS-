@@ -21,8 +21,9 @@ import threading
 import logging
 import os
 import time
-import signal
 import ipaddress
+import tempfile
+import re
 
 from colorama import Fore, Style
 
@@ -34,8 +35,15 @@ DNSMASQ_LEASE_PATH = '/tmp/dsips_dnsmasq.leases'
 
 
 class GatewayMode:
-    def __init__(self, interface=None, db=None):
+    def __init__(self, interface=None, db=None, dry_run=False):
         self.interface = interface or 'eth0'
+        if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,15}', self.interface):
+            raise ValueError('Geçersiz ağ arayüzü')
+        self.dry_run = dry_run
+        self._owned_rules = []
+        self._original_forwarding = None
+        self._dhcp_dir = None
+        self._lock = threading.RLock()
         self.db = db
         self.active = False
         self.dhcp_active = False
@@ -79,113 +87,84 @@ class GatewayMode:
             pass
 
     def enable(self):
-        """Ağ geçidi modunu etkinleştirir (IP Forwarding + NAT Masquerading)."""
-        try:
-            # 1. IP Forwarding aç
-            subprocess.run(['sysctl', '-w', 'net.ipv4.ip_forward=1'], 
-                          capture_output=True, check=True)
-            
-            # 2. NAT Masquerading kur
-            check = subprocess.run(
-                ['iptables', '-t', 'nat', '-C', 'POSTROUTING', '-o', self.interface, '-j', 'MASQUERADE'],
-                capture_output=True
-            )
-            if check.returncode != 0:
-                subprocess.run(
-                    ['iptables', '-t', 'nat', '-A', 'POSTROUTING', '-o', self.interface, '-j', 'MASQUERADE'],
-                    check=True, capture_output=True
-                )
-            
-            # 3. FORWARD zincirinde bağlantı izleme
-            check2 = subprocess.run(
-                ['iptables', '-C', 'FORWARD', '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT'],
-                capture_output=True
-            )
-            if check2.returncode != 0:
-                subprocess.run(
-                    ['iptables', '-A', 'FORWARD', '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT'],
-                    check=True, capture_output=True
-                )
-            
-            # 4. FORWARD zincirinde gelen trafiği kabul et
-            check3 = subprocess.run(
-                ['iptables', '-C', 'FORWARD', '-i', self.interface, '-j', 'ACCEPT'],
-                capture_output=True
-            )
-            if check3.returncode != 0:
-                subprocess.run(
-                    ['iptables', '-A', 'FORWARD', '-i', self.interface, '-j', 'ACCEPT'],
-                    check=True, capture_output=True
-                )
-            
-            self.active = True
-            print(f"{Fore.GREEN}[+] 🌐 Ağ Geçidi Modu AKTİF - IP Forwarding + NAT Masquerading kuruldu.{Style.RESET_ALL}")
-            print(f"{Fore.CYAN}[ℹ️] Kali Gateway IP: {self.local_ip}{Style.RESET_ALL}")
-            
-            if self.db:
-                self.db.add_alert(
-                    alert_type="🌐 Ağ Geçidi Modu Etkinleştirildi",
-                    src_ip=self.local_ip or 'N/A', src_mac='N/A',
-                    dst_ip='N/A', dst_mac='N/A',
-                    description=f"IPS Ağ Geçidi Modu aktif. Gateway: {self.local_ip}",
-                    severity='info'
-                )
-            
-            return True
-        except Exception as e:
-            logger.error(f"[!] Ağ geçidi modu etkinleştirilemedi: {e}")
-            print(f"{Fore.RED}[!] Ağ Geçidi Modu hatası: {e}{Style.RESET_ALL}")
+        """Enable forwarding and remember exactly which state this instance owns."""
+        if self.dry_run:
             return False
+        with self._lock:
+            if self.active:
+                return True
+            try:
+                result = subprocess.run(['sysctl', '-n', 'net.ipv4.ip_forward'], capture_output=True, text=True, check=True, timeout=5)
+                self._original_forwarding = result.stdout.strip()
+                if self._original_forwarding not in {'0', '1'}:
+                    raise ValueError('IP forwarding durumu okunamadı')
+                subprocess.run(['sysctl', '-w', 'net.ipv4.ip_forward=1'], capture_output=True, check=True, timeout=5)
+                rules = [
+                    (['-t', 'nat'], ['POSTROUTING', '-o', self.interface, '-m', 'comment', '--comment', 'dsips-gateway', '-j', 'MASQUERADE']),
+                    ([], ['FORWARD', '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'dsips-gateway', '-j', 'ACCEPT']),
+                    ([], ['FORWARD', '-i', self.interface, '-m', 'comment', '--comment', 'dsips-gateway', '-j', 'ACCEPT']),
+                ]
+                for table, rule in rules:
+                    result = subprocess.run(['iptables', *table, '-C', *rule], capture_output=True, timeout=5)
+                    if result.returncode == 1:
+                        subprocess.run(['iptables', *table, '-A', *rule], capture_output=True, check=True, timeout=5)
+                        self._owned_rules.append((table, rule))
+                    elif result.returncode != 0:
+                        raise subprocess.CalledProcessError(result.returncode, result.args)
+                self.active = True
+                return True
+            except Exception:
+                logger.exception('Ağ geçidi modu etkinleştirilemedi')
+                self.disable()
+                return False
 
     def disable(self):
-        """Ağ geçidi modunu devre dışı bırakır."""
-        try:
-            # Önce DHCP'yi kapat
-            if self.dhcp_active:
-                self.stop_dhcp()
-            
-            subprocess.run(['sysctl', '-w', 'net.ipv4.ip_forward=0'], 
-                          capture_output=True)
-            subprocess.run(
-                ['iptables', '-t', 'nat', '-D', 'POSTROUTING', '-o', self.interface, '-j', 'MASQUERADE'],
-                capture_output=True
-            )
-            self.active = False
-            print(f"{Fore.YELLOW}[-] Ağ Geçidi Modu devre dışı bırakıldı.{Style.RESET_ALL}")
-            return True
-        except Exception as e:
-            logger.error(f"[!] Ağ geçidi kapatma hatası: {e}")
+        if self.dry_run:
             return False
+        with self._lock:
+            success = self.stop_dhcp()
+            for table, rule in list(reversed(self._owned_rules)):
+                try:
+                    subprocess.run(['iptables', *table, '-D', *rule], capture_output=True, check=True, timeout=5)
+                    self._owned_rules.remove((table, rule))
+                except Exception:
+                    success = False
+                    logger.exception('Gateway firewall cleanup failed')
+            if self._original_forwarding is not None:
+                try:
+                    subprocess.run(['sysctl', '-w', f'net.ipv4.ip_forward={self._original_forwarding}'], capture_output=True, check=True, timeout=5)
+                    self._original_forwarding = None
+                except Exception:
+                    success = False
+                    logger.exception('Unable to restore IP forwarding')
+            if success:
+                self.active = False
+            return success
 
     # =============================================
     # DHCP Sunucusu (dnsmasq) - Otomatik Gateway
     # =============================================
     def _generate_dhcp_range(self):
-        """Ağ alt ağına göre DHCP dağıtım aralığı hesaplar.
-        Kali IP'si ve gerçek gateway IP'si aralık dışında bırakılır."""
-        if not self.local_ip:
+        """Select one contiguous range in the detected subnet, excluding gateways."""
+        if not self.local_ip or not self.subnet_mask:
             return None, None
         try:
-            net = ipaddress.IPv4Network(f"{self.local_ip}/24", strict=False)
-            hosts = list(net.hosts())
-            
-            # Kali IP ve gateway IP'yi çıkar
-            exclude = set()
-            if self.local_ip:
-                exclude.add(ipaddress.IPv4Address(self.local_ip))
-            if self.gateway_ip:
-                exclude.add(ipaddress.IPv4Address(self.gateway_ip))
-            
-            available = [h for h in hosts if h not in exclude]
-            if len(available) < 10:
+            net = ipaddress.IPv4Network(f"{self.local_ip}/{self.subnet_mask}", strict=False)
+            if net.prefixlen >= 31:
                 return None, None
-            
-            # Aralığı ortadan başlat (çakışma riski düşük)
-            mid = len(available) // 2
-            start = available[mid]
-            end = available[min(mid + 50, len(available) - 1)]
-            return str(start), str(end)
-        except Exception:
+            low, high = int(net.network_address) + 1, int(net.broadcast_address) - 1
+            excluded = sorted({int(ipaddress.IPv4Address(ip)) for ip in (self.local_ip, self.gateway_ip) if ip and ipaddress.IPv4Address(ip) in net})
+            segments = []
+            for boundary in excluded + [high + 1]:
+                if low < boundary:
+                    segments.append((low, boundary - 1))
+                low = boundary + 1
+            if not segments:
+                return None, None
+            start, end = max(segments, key=lambda pair: pair[1] - pair[0])
+            start = max(start, end - 49)
+            return str(ipaddress.IPv4Address(start)), str(ipaddress.IPv4Address(end))
+        except ValueError:
             return None, None
 
     def start_dhcp(self):
@@ -195,6 +174,8 @@ class GatewayMode:
         ÖNEMLİ: Modemde/router'da DHCP sunucusunun kapatılması önerilir,
         aksi halde çift DHCP çakışması yaşanabilir.
         """
+        if self.dry_run or not self.active:
+            return False
         if self.dhcp_active:
             print(f"{Fore.YELLOW}[!] DHCP sunucusu zaten çalışıyor.{Style.RESET_ALL}")
             return True
@@ -208,6 +189,12 @@ class GatewayMode:
             print(f"{Fore.RED}[!] DHCP aralığı hesaplanamadı.{Style.RESET_ALL}")
             return False
         
+        if self._dhcp_dir is None:
+            self._dhcp_dir = tempfile.TemporaryDirectory(prefix='dsips-dhcp-')
+        conf_path = os.path.join(self._dhcp_dir.name, 'dnsmasq.conf')
+        pid_path = os.path.join(self._dhcp_dir.name, 'dnsmasq.pid')
+        lease_path = os.path.join(self._dhcp_dir.name, 'dnsmasq.leases')
+
         # DNS olarak Google + Cloudflare kullan
         dns_servers = '8.8.8.8,1.1.1.1'
         
@@ -229,29 +216,26 @@ dhcp-option=3,{self.local_ip}
 dhcp-option=6,{dns_servers}
 
 # Lease dosyası
-dhcp-leasefile={DNSMASQ_LEASE_PATH}
+dhcp-leasefile={lease_path}
 
 # PID dosyası
-pid-file={DNSMASQ_PID_PATH}
+pid-file={pid_path}
 
 # Sadece DHCP, DNS proxy değil
 port=0
 
 # Log
 log-dhcp
-log-facility=/tmp/dsips_dnsmasq.log
+log-facility=-
 """
         
         try:
-            with open(DNSMASQ_CONF_PATH, 'w') as f:
+            with open(conf_path, 'w') as f:
                 f.write(conf)
-            
-            # Varsa eski dnsmasq DS-IPS sürecini öldür
-            self._kill_existing_dnsmasq()
             
             # dnsmasq'ı başlat
             self.dhcp_process = subprocess.Popen(
-                ['dnsmasq', '-C', DNSMASQ_CONF_PATH, '--no-daemon'],
+                ['dnsmasq', '-C', conf_path, '--no-daemon'],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
@@ -289,47 +273,32 @@ log-facility=/tmp/dsips_dnsmasq.log
             return False
 
     def stop_dhcp(self):
-        """DHCP sunucusunu durdurur."""
+        """Stop only the child process started by this instance."""
         try:
             if self.dhcp_process and self.dhcp_process.poll() is None:
                 self.dhcp_process.terminate()
-                self.dhcp_process.wait(timeout=3)
-            
-            self._kill_existing_dnsmasq()
-            
-            # Geçici dosyaları temizle
-            for f in [DNSMASQ_CONF_PATH, DNSMASQ_PID_PATH]:
                 try:
-                    os.remove(f)
-                except FileNotFoundError:
-                    pass
-            
+                    self.dhcp_process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.dhcp_process.kill()
+                    self.dhcp_process.wait(timeout=3)
+            self.dhcp_process = None
             self.dhcp_active = False
-            print(f"{Fore.YELLOW}[-] 📡 DHCP Sunucusu durduruldu.{Style.RESET_ALL}")
+            if self._dhcp_dir is not None:
+                self._dhcp_dir.cleanup()
+                self._dhcp_dir = None
             return True
-        except Exception as e:
-            logger.error(f"[!] DHCP durdurma hatası: {e}")
+        except Exception:
+            logger.exception('DHCP durdurma hatası')
             return False
-
-    def _kill_existing_dnsmasq(self):
-        """DS-IPS'e ait dnsmasq süreçlerini öldürür."""
-        try:
-            if os.path.exists(DNSMASQ_PID_PATH):
-                with open(DNSMASQ_PID_PATH, 'r') as f:
-                    pid = int(f.read().strip())
-                os.kill(pid, signal.SIGTERM)
-                time.sleep(0.3)
-        except (ProcessLookupError, ValueError, FileNotFoundError):
-            pass
-        # Fallback: tüm dsips config kullanan dnsmasq'ları öldür
-        subprocess.run(['pkill', '-f', DNSMASQ_CONF_PATH], capture_output=True)
 
     def get_connected_devices(self):
         """DHCP lease dosyasından bağlı cihazları okur."""
         devices = []
         try:
-            if os.path.exists(DNSMASQ_LEASE_PATH):
-                with open(DNSMASQ_LEASE_PATH, 'r') as f:
+            lease_path = os.path.join(self._dhcp_dir.name, 'dnsmasq.leases') if self._dhcp_dir else None
+            if lease_path and os.path.exists(lease_path):
+                with open(lease_path, 'r') as f:
                     for line in f:
                         parts = line.strip().split()
                         if len(parts) >= 4:
@@ -347,7 +316,7 @@ log-facility=/tmp/dsips_dnsmasq.log
         """Ağ geçidi modu durumunu döner."""
         try:
             result = subprocess.run(['sysctl', 'net.ipv4.ip_forward'], capture_output=True, text=True)
-            forwarding = '1' in result.stdout
+            forwarding = result.returncode == 0 and result.stdout.partition('=')[2].strip() == '1'
         except Exception:
             forwarding = False
         

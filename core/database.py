@@ -7,8 +7,7 @@
 
 import sqlite3
 import threading
-import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from colorama import Fore, Style
 
 
@@ -25,7 +24,7 @@ class Database:
             db_path (str): Veritabanı dosyasının yolu. Varsayılan 'ds_ips.db'.
         """
         self.db_path = db_path
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.socketio = None  # WebSocket referansı
         self.alert_callback = None  # Ek callback fonksiyonu
         
@@ -73,14 +72,17 @@ class Database:
                 )
             ''')
             
-            # Eski veritabanı varsa kolonları ekle (hata verirse atla)
-            try:
-                self.cursor.execute("ALTER TABLE ip_mac_records ADD COLUMN vendor TEXT DEFAULT 'Bilinmiyor'")
-                self.cursor.execute("ALTER TABLE ip_mac_records ADD COLUMN hostname TEXT DEFAULT 'Bilinmiyor'")
-                self.cursor.execute("ALTER TABLE ip_mac_records ADD COLUMN os_type TEXT DEFAULT 'Bilinmiyor'")
-                self.cursor.execute("ALTER TABLE ip_mac_records ADD COLUMN threat_score INTEGER DEFAULT 0")
-            except sqlite3.OperationalError:
-                pass
+            # Migrate each missing column independently; an existing vendor column
+            # must not prevent newer columns from being added.
+            columns = {row[1] for row in self.cursor.execute("PRAGMA table_info(ip_mac_records)")}
+            for name, declaration in {
+                'vendor': "TEXT DEFAULT 'Bilinmiyor'",
+                'hostname': "TEXT DEFAULT 'Bilinmiyor'",
+                'os_type': "TEXT DEFAULT 'Bilinmiyor'",
+                'threat_score': 'INTEGER DEFAULT 0',
+            }.items():
+                if name not in columns:
+                    self.cursor.execute(f"ALTER TABLE ip_mac_records ADD COLUMN {name} {declaration}")
 
             self.cursor.execute('''
                 CREATE TABLE IF NOT EXISTS alerts (
@@ -126,6 +128,10 @@ class Database:
                 )
             ''')
             
+            columns = {row[1] for row in self.cursor.execute("PRAGMA table_info(banned_hosts)")}
+            if 'expires_at' not in columns:
+                self.cursor.execute("ALTER TABLE banned_hosts ADD COLUMN expires_at TIMESTAMP")
+
             self.cursor.execute('''
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
@@ -226,6 +232,7 @@ class Database:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (alert_type, src_ip, src_mac, dst_ip, dst_mac, description, severity, pcap_file))
             
+            alert_id = self.cursor.lastrowid
             # Tehdit skorunu artır
             if src_ip and src_ip != 'N/A':
                 score_increase = 50 if severity.lower() == 'critical' else 25 if severity.lower() == 'high' else 10
@@ -236,8 +243,7 @@ class Database:
                 ''', (score_increase, src_ip))
                 
             self.conn.commit()
-            alert_id = self.cursor.lastrowid
-            
+
         # Konsol çıktısı
         severity_lower = severity.lower()
         if severity_lower in ['critical', 'high']:
@@ -254,7 +260,7 @@ class Database:
         # WebSocket bildirimi
         alert_data = {
             'id': alert_id,
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
             'alert_type': alert_type,
             'source_ip': src_ip,
             'source_mac': src_mac,
@@ -266,17 +272,17 @@ class Database:
         }
         alert_data.update(kwargs)
         
-        if self.socketio:
-            try:
-                self.socketio.emit('new_alert', alert_data, namespace='/')
-            except Exception:
-                pass
-        
         if self.alert_callback:
             try:
                 self.alert_callback(alert_data)
             except Exception:
                 pass
+        if self.socketio:
+            try:
+                self.socketio.emit('new_alert', alert_data, namespace='/')
+            except Exception:
+                pass
+        return alert_id
 
     def update_alert_pcap(self, alert_id, pcap_file):
         """Alarm tablosundaki bir alarmın pcap_file sütununu günceller."""
@@ -287,7 +293,7 @@ class Database:
     def get_alerts(self, limit=50):
         """En son alarmları getirir."""
         with self.lock:
-            self.cursor.execute('SELECT * FROM alerts ORDER BY timestamp DESC LIMIT ?', (limit,))
+            self.cursor.execute('SELECT * FROM alerts ORDER BY timestamp DESC, id DESC LIMIT ?', (limit,))
             return [dict(row) for row in self.cursor.fetchall()]
 
     def get_alert_counts(self):
@@ -302,13 +308,13 @@ class Database:
             self.cursor.execute('SELECT COUNT(*) FROM alerts')
             return self.cursor.fetchone()[0]
 
-    def add_ban(self, ip, mac, reason):
+    def add_ban(self, ip, mac, reason, duration=None):
         """Bir IP veya MAC adresini yasaklılar listesine ekler."""
         with self.lock:
             self.cursor.execute('''
-                INSERT INTO banned_hosts (ip_address, mac_address, reason)
-                VALUES (?, ?, ?)
-            ''', (ip, mac, reason))
+                INSERT INTO banned_hosts (ip_address, mac_address, reason, expires_at)
+                VALUES (?, ?, ?, ?)
+            ''', (ip, mac, reason, (datetime.now(timezone.utc) + timedelta(seconds=duration)).strftime('%Y-%m-%d %H:%M:%S') if duration else None))
             self.conn.commit()
         
         if self.socketio:
@@ -335,7 +341,7 @@ class Database:
             conditions.append("mac_address = ?")
             params.append(mac)
             
-        query += " OR ".join(conditions)
+        query += "(" + " OR ".join(conditions) + ")"
             
         with self.lock:
             self.cursor.execute(query, tuple(params))
@@ -354,6 +360,17 @@ class Database:
         with self.lock:
             self.cursor.execute('SELECT * FROM banned_hosts WHERE is_active = 1')
             return [dict(row) for row in self.cursor.fetchall()]
+
+    def remove_ban_by_id(self, ban_id):
+        """Retire one stale history row without touching a newer target ban."""
+        with self.lock:
+            self.cursor.execute('''
+                UPDATE banned_hosts SET is_active=0, unban_time=CURRENT_TIMESTAMP
+                WHERE id=? AND is_active=1
+            ''', (ban_id,))
+            changed = self.cursor.rowcount > 0
+            self.conn.commit()
+        return changed
 
     def get_active_ban_count(self):
         """Aktif yasak sayısını döner."""
@@ -385,37 +402,23 @@ class Database:
             return count > 0
 
     def get_ip_mac_records(self, limit=100):
-        """IP-MAC kayıtlarını getirir (MAC adresine göre gruplanmış ve N/A IP'ler elenmiş şekilde)."""
+        """Return the latest observed binding per IP, retaining shared-MAC peers."""
+        if limit <= 0:
+            return []
         with self.lock:
-            self.cursor.execute('SELECT * FROM ip_mac_records ORDER BY last_seen DESC')
+            self.cursor.execute('SELECT * FROM ip_mac_records ORDER BY last_seen DESC, id DESC')
             rows = [dict(row) for row in self.cursor.fetchall()]
-            
-            # Aynı MAC adresine sahip birden fazla kayıt (Örn: N/A ve gerçek IP) varsa birleştir
-            unique_macs = {}
-            for r in rows:
-                mac = r['mac_address']
-                ip = r['ip_address']
-                
-                if mac not in unique_macs:
-                    unique_macs[mac] = r
-                else:
-                    # Mevcut kayıt N/A ise ve yeni gelen geçerliyse ez
-                    if unique_macs[mac]['ip_address'] == 'N/A' and ip != 'N/A':
-                        unique_macs[mac]['ip_address'] = ip
-                        
-                    # Mevcut kaydın OS/Vendor/Hostname bilgisi "Bilinmiyor" ise ve yeni gelende varsa tamamla
-                    for field in ['vendor', 'hostname', 'os_type']:
-                        if unique_macs[mac].get(field, 'Bilinmiyor') == 'Bilinmiyor' and r.get(field, 'Bilinmiyor') != 'Bilinmiyor':
-                            unique_macs[mac][field] = r[field]
-                            
-                    # Tehdit skorunu en yüksek olana ayarla
-                    if r.get('threat_score', 0) > unique_macs[mac].get('threat_score', 0):
-                        unique_macs[mac]['threat_score'] = r['threat_score']
-                        
-            result = list(unique_macs.values())
-            # Yeniden sırala ve limite göre kes
-            result.sort(key=lambda x: x.get('last_seen', ''), reverse=True)
-            return result[:limit]
+        records = {}
+        for row in rows:
+            ip = row['ip_address']
+            if not ip or ip == 'N/A' or ip in records:
+                continue
+            # A router MAC or an unknown MAC can describe multiple observed
+            # peers. Grouping by MAC silently erased these IPs from the panel.
+            records[ip] = row
+            if len(records) >= limit:
+                break
+        return list(records.values())
 
     def get_setting(self, key, default=None):
         """Ayar değerini getirir."""
@@ -437,7 +440,7 @@ class Database:
         """10 dakikadan eski DNS trafik geçmişini temizler."""
         with self.lock:
             # SQLite CURRENT_TIMESTAMP UTC kullanır, bu yüzden datetime.utcnow() kullanmalıyız.
-            ten_mins_ago = (datetime.utcnow() - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+            ten_mins_ago = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
             self.cursor.execute("DELETE FROM dns_logs WHERE timestamp < ?", (ten_mins_ago,))
             self.conn.commit()
 
@@ -451,25 +454,26 @@ class Database:
             ''', (src_ip, src_mac, domain, record_type))
             self.conn.commit()
             
-            # WebSocket ile ön yüze canlı olarak fırlat
-            if self.socketio:
-                log_data = {
-                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'src_ip': src_ip,
-                    'src_mac': src_mac,
-                    'domain': domain,
-                    'record_type': record_type
-                }
+        # Call external listeners after releasing the database lock.
+        if self.socketio:
+            log_data = {
+                'timestamp': datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                'src_ip': src_ip, 'src_mac': src_mac,
+                'domain': domain, 'record_type': record_type,
+            }
+            try:
                 self.socketio.emit('new_dns_log', log_data)
-                
+            except Exception:
+                pass
+
     def get_dns_logs(self, ip=None, limit=50):
         """Domain erişim geçmişini getirir (İsteğe bağlı IP filtreli)."""
         self.cleanup_old_dns_logs() # Her okumada da eskiyi temizle
         with self.lock:
             if ip:
-                self.cursor.execute('SELECT * FROM dns_logs WHERE src_ip = ? ORDER BY timestamp DESC LIMIT ?', (ip, limit))
+                self.cursor.execute('SELECT * FROM dns_logs WHERE src_ip = ? ORDER BY timestamp DESC, id DESC LIMIT ?', (ip, limit))
             else:
-                self.cursor.execute('SELECT * FROM dns_logs ORDER BY timestamp DESC LIMIT ?', (limit,))
+                self.cursor.execute('SELECT * FROM dns_logs ORDER BY timestamp DESC, id DESC LIMIT ?', (limit,))
             return [dict(row) for row in self.cursor.fetchall()]
 
     def close(self):

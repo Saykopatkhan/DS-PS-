@@ -1,38 +1,31 @@
-#!/usr/bin/env python3
-# ========================================================================
-# DS-IPS (Premium SOC Edition) - WSGI Production Entrypoint
-# ========================================================================
+"""Gunicorn entrypoint. Run one threaded worker; sensor state is process-local."""
 
-from gevent import monkey
-monkey.patch_all()
-
+import atexit
 import os
-import sys
-import threading
+from pathlib import Path
 
-# Ensure project root is in sys.path
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+from dotenv import load_dotenv
 
+from services import RuntimeServices, env_bool
 from web.app import IPSWebApp
 
-# Initialize IPSWebApp instance
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+
 webapp = IPSWebApp(
-    interface='wlan0',
-    mode='ips',
-    wifi_enabled=True,
-    db_path='ds_ips.db',
-    unban_time=3600,
-    dry_run=False
+    interface=os.environ.get("DS_IPS_INTERFACE", "any"),
+    mode=os.environ.get("DS_IPS_MODE", "ids"),
+    wifi_enabled=env_bool("DS_IPS_WIFI"),
+    db_path=os.environ.get("DS_IPS_DB", str(BASE_DIR / "ds_ips.db")),
+    unban_time=int(os.environ.get("DS_IPS_UNBAN_TIME", "3600")),
+    dry_run=env_bool("DS_IPS_DRY_RUN"),
 )
-
-# Start real-time stats broadcaster background thread for Socket.IO updates
-stats_thread = threading.Thread(target=webapp._stats_broadcaster, daemon=True)
-stats_thread.start()
-
-# Export Flask app object
 app = webapp.app
 
-if __name__ == '__main__':
-    webapp.run(host='127.0.0.1', port=5000)
+services = RuntimeServices(
+    webapp, hids_enabled=env_bool("DS_IPS_HIDS", True),
+    telegram_enabled=env_bool("DS_IPS_TELEGRAM"),
+)
+webapp.start_background_tasks()
+services.start()
+atexit.register(services.stop)

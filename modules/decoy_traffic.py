@@ -10,13 +10,14 @@ Decoy Traffic Generator (Beyaz Gürültü Üretici)
 Ağ dinleyen saldırganları (Sniffer) yanıltmak için sahte DNS ve HTTP trafiği oluşturur.
 """
 import threading
-import time
 import random
 import urllib.request
 from scapy.all import IP, UDP, DNS, DNSQR, send
 
 class DecoyTrafficGenerator:
-    def __init__(self):
+    def __init__(self, dry_run=False):
+        self.dry_run = dry_run
+        self._stop_event = threading.Event()
         self.running = False
         self.thread = None
         
@@ -41,7 +42,8 @@ class DecoyTrafficGenerator:
         ]
 
     def start(self):
-        if not self.running:
+        if not self.running and not self.dry_run:
+            self._stop_event.clear()
             self.running = True
             self.thread = threading.Thread(target=self._generate_noise, daemon=True)
             self.thread.start()
@@ -49,13 +51,17 @@ class DecoyTrafficGenerator:
 
     def stop(self):
         self.running = False
+        self._stop_event.set()
+        if self.thread and self.thread is not threading.current_thread():
+            self.thread.join(timeout=2)
         print("[-] Decoy Traffic (Beyaz Gürültü) motoru durduruldu.")
 
     def _generate_noise(self):
         while self.running:
             try:
                 # Rastgele bekleme süresi (1 ile 5 saniye arası)
-                time.sleep(random.uniform(1.0, 5.0))
+                if self._stop_event.wait(random.uniform(1.0, 5.0)):
+                    break
                 
                 action = random.choice(['dns', 'http'])
                 
@@ -70,7 +76,8 @@ class DecoyTrafficGenerator:
                     target_ip = random.choice(self.fake_ips)
                     try:
                         req = urllib.request.Request(f"http://{target_ip}/admin_login.php", headers={'User-Agent': 'Mozilla/5.0'})
-                        urllib.request.urlopen(req, timeout=0.5)
+                        with urllib.request.urlopen(req, timeout=0.5):
+                            pass
                     except Exception:
                         pass # İstek başarısız olsa da paket sniffers tarafından görülür
                         

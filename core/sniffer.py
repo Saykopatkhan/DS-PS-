@@ -7,8 +7,11 @@
 
 import threading
 import logging
+import os
+import tempfile
+import time
 from collections import deque
-from scapy.all import sniff, conf, wrpcap
+from scapy.all import sniff, wrpcap
 
 class PacketSniffer:
     """
@@ -27,8 +30,12 @@ class PacketSniffer:
         self.filter_str = filter_str
         self.callbacks = []
         self.running = False
+        self.packet_count = 0
+        self.last_packet_at = None
+        self.last_error = None
         self.sniff_thread = None
         self.pcap_buffer = deque(maxlen=1000)
+        self._buffer_lock = threading.Lock()
 
     def register_callback(self, callback):
         """
@@ -46,7 +53,10 @@ class PacketSniffer:
         Args:
             packet (scapy.packet.Packet): Yakalanan paket.
         """
-        self.pcap_buffer.append(packet)
+        with self._buffer_lock:
+            self.pcap_buffer.append(packet)
+            self.packet_count += 1
+            self.last_packet_at = time.time()
         
         for callback in self.callbacks:
             try:
@@ -58,23 +68,27 @@ class PacketSniffer:
         """
         Paket dinleme işlemini arka planda (daemon thread) başlatır.
         """
+        if self.running or (self.sniff_thread and self.sniff_thread.is_alive()):
+            return
         self.running = True
+        self.last_error = None
         self.sniff_thread = threading.Thread(target=self._sniff_loop, daemon=True)
         self.sniff_thread.start()
 
     def _sniff_loop(self):
         """Gerçek paket yakalama döngüsü."""
         try:
-            sniff(
-                store=0,
-                prn=self._packet_handler,
-                iface=None if self.interface == 'any' else self.interface,
-                filter=self.filter_str,
-                stop_filter=lambda x: not self.running
-            )
+            while self.running:
+                sniff(
+                    store=0, prn=self._packet_handler,
+                    iface=None if self.interface == 'any' else self.interface,
+                    filter=self.filter_str, timeout=1,
+                    stop_filter=lambda packet: not self.running,
+                )
         except KeyboardInterrupt:
             self.stop()
         except Exception as e:
+            self.last_error = str(e)[:200]
             logging.error(f"Sniffer hatası: {e}")
             self.running = False
 
@@ -83,7 +97,7 @@ class PacketSniffer:
         Paket dinleme işlemini durdurur.
         """
         self.running = False
-        if self.sniff_thread and self.sniff_thread.is_alive():
+        if self.sniff_thread and self.sniff_thread is not threading.current_thread() and self.sniff_thread.is_alive():
             self.sniff_thread.join(timeout=2.0)
 
     def dump_pcap(self, filename):
@@ -91,12 +105,21 @@ class PacketSniffer:
         Mevcut PCAP hafızasını (Ring Buffer) diske yazar.
         Ayrıca FIFO mekanizması ile dizindeki eski pcap dosyalarını silerek diskin dolmasını (DoS) engeller.
         """
+        temporary = None
         try:
-            wrpcap(filename, list(self.pcap_buffer))
+            with self._buffer_lock:
+                packets = list(self.pcap_buffer)
+            # Packet payloads are private evidence. Publish only complete files
+            # and use owner-only permissions regardless of the process umask.
+            fd, temporary = tempfile.mkstemp(prefix='.capture-', suffix='.tmp',
+                                             dir=os.path.dirname(os.path.abspath(filename)))
+            os.close(fd)
+            wrpcap(temporary, packets)
+            os.replace(temporary, filename)
+            temporary = None
             logging.info(f"PCAP başarıyla kaydedildi: {filename}")
             
             # Disk Exhaustion DoS Koruması (FIFO)
-            import os
             import glob
             pcap_dir = os.path.dirname(filename)
             if pcap_dir:
@@ -117,3 +140,9 @@ class PacketSniffer:
         except Exception as e:
             logging.error(f"PCAP kaydedilirken hata: {e}")
             return False
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass

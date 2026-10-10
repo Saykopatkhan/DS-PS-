@@ -7,6 +7,7 @@
 
 import requests
 import threading
+import html
 
 class Notifier:
     """
@@ -18,19 +19,28 @@ class Notifier:
         self.discord_webhook = discord_webhook
         self.sent_count = 0
         self.command_count = 0
+        self._slots = threading.BoundedSemaphore(4)
+        self._lock = threading.Lock()
 
     def send_alert(self, title, message, severity="high"):
+        if not (self.telegram_token and self.telegram_chat_id or self.discord_webhook):
+            return False
+        if not self._slots.acquire(blocking=False):
+            return False
         def _send():
-            if self.telegram_token and self.telegram_chat_id:
-                ok = self._send_telegram(f"🚨 <b>{title}</b>\n\n{message}")
-                if ok:
-                    self.sent_count += 1
-                    
-            if self.discord_webhook:
-                color = 16711680 if severity == "critical" else 16753920
-                self._send_discord(title, message, color)
-                
+            try:
+                delivered = False
+                if self.telegram_token and self.telegram_chat_id:
+                    delivered = self._send_telegram(f"🚨 <b>{html.escape(str(title))}</b>\n\n{html.escape(str(message))}")
+                if self.discord_webhook:
+                    delivered = self._send_discord(str(title), str(message), 16711680 if severity == 'critical' else 16753920) or delivered
+                if delivered:
+                    with self._lock:
+                        self.sent_count += 1
+            finally:
+                self._slots.release()
         threading.Thread(target=_send, daemon=True).start()
+        return True
 
     def _send_telegram(self, text):
         try:
@@ -54,7 +64,8 @@ class Notifier:
                     "color": color
                 }]
             }
-            requests.post(self.discord_webhook, json=payload, timeout=5)
+            response = requests.post(self.discord_webhook, json=payload, timeout=5)
+            return 200 <= response.status_code < 300
         except Exception:
-            pass
+            return False
 

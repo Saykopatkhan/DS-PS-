@@ -16,17 +16,19 @@ Gerçek aktif TCP oturumlarını tespit edip RST paketleri ile koparır.
 import subprocess
 import logging
 import re
+import ipaddress
 
 logger = logging.getLogger("DSIPS_TCPReset")
 
 class TCPResetEngine:
-    def __init__(self, interface=None, db=None):
+    def __init__(self, interface=None, db=None, dry_run=False):
         self.interface = interface
+        self.dry_run = dry_run
         self.db = db
         self._scapy_available = False
         try:
             from scapy.all import IP, TCP, send
-            self._scapy_available = True
+            self._scapy_available = all(callable(value) for value in (IP, TCP, send))
         except ImportError:
             logger.warning("[!] Scapy bulunamadı. TCP RST devre dışı.")
 
@@ -41,23 +43,24 @@ class TCPResetEngine:
         # Yöntem 1: ss komutu ile aktif TCP bağlantılarını bul
         try:
             result = subprocess.run(
-                ['ss', '-tnp', 'state', 'established'],
+                ['ss', '-Htn', 'state', 'established'],
                 capture_output=True, text=True, timeout=5
             )
             for line in result.stdout.splitlines():
                 if target_ip in line:
                     # ss çıktı formatı: ESTAB 0 0 local_ip:port peer_ip:port
                     parts = line.split()
-                    if len(parts) >= 5:
+                    if len(parts) >= 4:
                         try:
-                            local = parts[3]
-                            remote = parts[4]
+                            offset = 1 if parts[0] == 'ESTAB' else 0
+                            local = parts[2 + offset]
+                            remote = parts[3 + offset]
                             local_ip, local_port = local.rsplit(':', 1)
                             remote_ip, remote_port = remote.rsplit(':', 1)
                             # IPv6 mapped IPv4 temizle
                             local_ip = local_ip.replace('::ffff:', '').strip('[]')
                             remote_ip = remote_ip.replace('::ffff:', '').strip('[]')
-                            if target_ip in remote_ip or target_ip in local_ip:
+                            if target_ip == remote_ip or target_ip == local_ip:
                                 sessions.append((local_ip, int(local_port), remote_ip, int(remote_port)))
                         except (ValueError, IndexError):
                             continue
@@ -91,22 +94,14 @@ class TCPResetEngine:
         except Exception as e:
             logger.debug(f"conntrack sorgusu hatası: {e}")
 
-        # Oturum bulunamadıysa yaygın portlara fallback
-        if not sessions:
-            common_ports = [22, 23, 25, 53, 80, 443, 445, 993, 995, 3306, 3389, 5432, 5900, 8080, 8443, 8888, 4444, 5555]
-            for p in common_ports:
-                sessions.append(('0.0.0.0', p, target_ip, p))
-            logger.info(f"[*] {target_ip} için aktif oturum bulunamadı, yaygın portlara RST gönderiliyor.")
-        else:
-            logger.info(f"[+] {target_ip} ile {len(sessions)} aktif TCP oturumu bulundu.")
-
         return sessions
 
     def kill_session(self, src_ip, dst_ip=None, src_port=None, dst_port=None):
         """
         Saldırgan IP ile olan tüm aktif TCP oturumlarını RST injection ile koparır.
         """
-        if not self._scapy_available:
+        src_ip = str(ipaddress.IPv4Address(src_ip))
+        if self.dry_run or not self._scapy_available:
             logger.error("[!] Scapy yüklü değil, RST gönderilemez.")
             return False
             
@@ -117,6 +112,8 @@ class TCPResetEngine:
             # Aktif oturumları bul
             sessions = self._find_active_sessions(src_ip)
             
+            if not sessions:
+                return False
             count = 0
             for local_ip, local_port, remote_ip, remote_port in sessions:
                 try:
@@ -153,16 +150,16 @@ class TCPResetEngine:
             except Exception:
                 pass
 
-            logger.info(f"[⚡] IP {src_ip} - {count} TCP oturumu RST ile koparıldı.")
+            logger.info(f"[⚡] IP {src_ip} - {count} TCP oturumuna RST paketleri gönderildi.")
             
             if self.db:
                 self.db.add_alert(
                     alert_type="⚡ TCP RST Active Session Killer",
                     src_ip=src_ip, src_mac="N/A", dst_ip="N/A", dst_mac="N/A",
-                    description=f"Saldırgan {src_ip} cihazının {count} aktif TCP oturumu RST paketleri ile koparıldı.",
+                    description=f"Saldırgan {src_ip} cihazının {count} aktif TCP oturumuna RST paketleri gönderildi.",
                     severity="critical"
                 )
-            return True
+            return count > 0
         except Exception as e:
             logger.error(f"[!] TCP RST injection hatası: {e}")
             return False
